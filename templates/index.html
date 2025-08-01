@@ -1,0 +1,378 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ラズパイカメラストリーミング</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: rgba(255, 255, 255, 0.95);
+            border-radius: 20px;
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.1);
+            overflow: hidden;
+        }
+
+        .header {
+            background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+            color: white;
+            padding: 30px;
+            text-align: center;
+        }
+
+        .header h1 {
+            font-size: 2.5em;
+            margin-bottom: 10px;
+            text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.3);
+        }
+
+        .header p {
+            font-size: 1.1em;
+            opacity: 0.9;
+        }
+
+        .content {
+            padding: 30px;
+        }
+
+        .video-container {
+            position: relative;
+            width: 100%;
+            max-width: 800px;
+            margin: 0 auto 30px;
+            border-radius: 15px;
+            overflow: hidden;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+        }
+
+        .video-stream {
+            width: 100%;
+            height: auto;
+            display: block;
+            background: #000;
+        }
+
+        .controls {
+            display: flex;
+            gap: 15px;
+            justify-content: center;
+            flex-wrap: wrap;
+            margin-bottom: 30px;
+        }
+
+        .btn {
+            padding: 12px 24px;
+            border: none;
+            border-radius: 25px;
+            font-size: 1em;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            text-decoration: none;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
+        }
+
+        .btn-success {
+            background: linear-gradient(135deg, #56ab2f 0%, #a8e6cf 100%);
+            color: white;
+        }
+
+        .btn-success:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(86, 171, 47, 0.4);
+        }
+
+        .btn-warning {
+            background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+            color: white;
+        }
+
+        .btn-warning:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(240, 147, 251, 0.4);
+        }
+
+        .status {
+            background: #f8f9fa;
+            border-radius: 10px;
+            padding: 20px;
+            margin-bottom: 20px;
+            border-left: 4px solid #4facfe;
+        }
+
+        .status h3 {
+            color: #333;
+            margin-bottom: 10px;
+        }
+
+        .status-indicator {
+            display: inline-block;
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            margin-right: 8px;
+        }
+
+        .status-online {
+            background: #28a745;
+        }
+
+        .status-offline {
+            background: #dc3545;
+        }
+
+        .snapshot-container {
+            text-align: center;
+            margin-top: 30px;
+        }
+
+        .snapshot-image {
+            max-width: 100%;
+            height: auto;
+            border-radius: 10px;
+            box-shadow: 0 5px 15px rgba(0, 0, 0, 0.2);
+            margin-top: 15px;
+        }
+
+        .loading {
+            display: none;
+            text-align: center;
+            padding: 20px;
+        }
+
+        .spinner {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #4facfe;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 10px;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .error {
+            background: #f8d7da;
+            color: #721c24;
+            padding: 15px;
+            border-radius: 10px;
+            margin: 10px 0;
+            border: 1px solid #f5c6cb;
+        }
+
+        @media (max-width: 768px) {
+            .header h1 {
+                font-size: 2em;
+            }
+            
+            .controls {
+                flex-direction: column;
+                align-items: center;
+            }
+            
+            .btn {
+                width: 100%;
+                max-width: 300px;
+                justify-content: center;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>📹 ラズパイカメラストリーミング</h1>
+            <p>リアルタイムカメラフィードとコントロール</p>
+        </div>
+
+        <div class="content">
+            <div class="status">
+                <h3>📊 システム状態</h3>
+                <p>
+                    <span class="status-indicator" id="cameraStatus"></span>
+                    <span id="statusText">カメラ状態を確認中...</span>
+                </p>
+                <p id="timestamp"></p>
+            </div>
+
+            <div class="video-container">
+                <img src="{{ url_for('video_feed') }}" alt="カメラストリーム" class="video-stream" id="videoStream">
+            </div>
+
+            <div class="controls">
+                <button class="btn btn-primary" onclick="checkStatus()">
+                    🔄 状態確認
+                </button>
+                <button class="btn btn-success" onclick="takeSnapshot()">
+                    📸 スナップショット
+                </button>
+                <button class="btn btn-warning" onclick="restartCamera()">
+                    🔧 カメラ再起動
+                </button>
+            </div>
+
+            <div class="loading" id="loading">
+                <div class="spinner"></div>
+                <p>処理中...</p>
+            </div>
+
+            <div class="snapshot-container" id="snapshotContainer" style="display: none;">
+                <h3>📸 スナップショット</h3>
+                <img id="snapshotImage" class="snapshot-image" alt="スナップショット">
+                <br>
+                <a id="downloadLink" class="btn btn-primary" download="snapshot.jpg">
+                    💾 ダウンロード
+                </a>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // 状態確認
+        async function checkStatus() {
+            showLoading(true);
+            try {
+                const response = await fetch('/api/status');
+                const data = await response.json();
+                
+                const statusIndicator = document.getElementById('cameraStatus');
+                const statusText = document.getElementById('statusText');
+                const timestamp = document.getElementById('timestamp');
+                
+                if (data.camera_initialized) {
+                    statusIndicator.className = 'status-indicator status-online';
+                    statusText.textContent = 'カメラ: オンライン';
+                } else {
+                    statusIndicator.className = 'status-indicator status-offline';
+                    statusText.textContent = 'カメラ: オフライン';
+                }
+                
+                const date = new Date(data.timestamp * 1000);
+                timestamp.textContent = `最終更新: ${date.toLocaleString('ja-JP')}`;
+                
+            } catch (error) {
+                showError('状態確認に失敗しました: ' + error.message);
+            } finally {
+                showLoading(false);
+            }
+        }
+
+        // スナップショット取得
+        async function takeSnapshot() {
+            showLoading(true);
+            try {
+                const response = await fetch('/api/snapshot');
+                
+                if (response.ok) {
+                    const blob = await response.blob();
+                    const imageUrl = URL.createObjectURL(blob);
+                    
+                    const snapshotImage = document.getElementById('snapshotImage');
+                    const downloadLink = document.getElementById('downloadLink');
+                    const snapshotContainer = document.getElementById('snapshotContainer');
+                    
+                    snapshotImage.src = imageUrl;
+                    downloadLink.href = imageUrl;
+                    snapshotContainer.style.display = 'block';
+                    
+                    // ページの最下部にスクロール
+                    snapshotContainer.scrollIntoView({ behavior: 'smooth' });
+                    
+                } else {
+                    const errorData = await response.json();
+                    showError('スナップショット取得に失敗しました: ' + errorData.error);
+                }
+                
+            } catch (error) {
+                showError('スナップショット取得に失敗しました: ' + error.message);
+            } finally {
+                showLoading(false);
+            }
+        }
+
+        // カメラ再起動
+        async function restartCamera() {
+            if (!confirm('カメラを再起動しますか？')) {
+                return;
+            }
+            
+            showLoading(true);
+            try {
+                const response = await fetch('/api/restart_camera');
+                const data = await response.json();
+                
+                if (data.success) {
+                    alert('カメラを再起動しました。ページを再読み込みしてください。');
+                    location.reload();
+                } else {
+                    showError('カメラ再起動に失敗しました: ' + data.message);
+                }
+                
+            } catch (error) {
+                showError('カメラ再起動に失敗しました: ' + error.message);
+            } finally {
+                showLoading(false);
+            }
+        }
+
+        // ローディング表示
+        function showLoading(show) {
+            const loading = document.getElementById('loading');
+            loading.style.display = show ? 'block' : 'none';
+        }
+
+        // エラー表示
+        function showError(message) {
+            const errorDiv = document.createElement('div');
+            errorDiv.className = 'error';
+            errorDiv.textContent = message;
+            
+            const content = document.querySelector('.content');
+            content.insertBefore(errorDiv, content.firstChild);
+            
+            // 3秒後にエラーメッセージを削除
+            setTimeout(() => {
+                errorDiv.remove();
+            }, 3000);
+        }
+
+        // ページ読み込み時に状態確認
+        document.addEventListener('DOMContentLoaded', function() {
+            checkStatus();
+            
+            // 30秒ごとに状態確認
+            setInterval(checkStatus, 30000);
+        });
+    </script>
+</body>
+</html> 

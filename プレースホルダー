@@ -1,0 +1,5 @@
+| 書かれてるもの                         | 実際の意味                                         |
+| ------------------------------------ | --------------------------------------------- |
+| `cp -r {download_dir} /path/to/usb/` | `cp -r packages /media/pi/ESD-USB/` などに置き換え必要 |
+| `/path/to/raspi-camera-streaming`    | 実際のプロジェクトフォルダに変更する                            |
+| `/path/to/usb/packages/*.whl`        | `/media/pi/USBNAME/packages/*.whl` に変える       |
