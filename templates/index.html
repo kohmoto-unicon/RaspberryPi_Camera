@@ -190,6 +190,28 @@
             border: 1px solid #f5c6cb;
         }
 
+        .nav-links {
+            text-align: center;
+            margin-bottom: 20px;
+        }
+
+        .nav-links a {
+            display: inline-block;
+            padding: 10px 20px;
+            margin: 0 10px;
+            background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+            color: white;
+            text-decoration: none;
+            border-radius: 25px;
+            font-weight: 600;
+            transition: all 0.3s ease;
+        }
+
+        .nav-links a:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(79, 172, 254, 0.4);
+        }
+
         @media (max-width: 768px) {
             .header h1 {
                 font-size: 2em;
@@ -216,6 +238,11 @@
         </div>
 
         <div class="content">
+            <div class="nav-links">
+                <a href="/">📹 カメラストリーミング</a>
+                <a href="/pump_control">🔧 ポンプ制御</a>
+            </div>
+
             <div class="status">
                 <h3>📊 システム状態</h3>
                 <p>
@@ -275,6 +302,13 @@
                 } else {
                     statusIndicator.className = 'status-indicator status-offline';
                     statusText.textContent = 'カメラ: オフライン';
+                }
+                
+                // シリアル通信状態も表示
+                if (data.serial_initialized) {
+                    console.log('シリアル通信: オンライン');
+                } else {
+                    console.log('シリアル通信: オフライン');
                 }
                 
                 const date = new Date(data.timestamp * 1000);

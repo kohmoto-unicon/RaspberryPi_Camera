@@ -1,16 +1,17 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-ラズパイ公式カメラモジュール ストリーミングWebサーバー
+ラズパイ公式カメラモジュール ストリーミングWebサーバー + ポンプ制御
 """
 
 import os
 import time
 import threading
-from flask import Flask, render_template, Response, jsonify
+from flask import Flask, render_template, Response, jsonify, request
 import cv2
 import numpy as np
 import io
+import serial
 
 # Raspberry Pi専用ライブラリのインポート（PCでは利用不可）
 try:
@@ -32,6 +33,55 @@ stream_thread = None
 frame_buffer = None
 frame_lock = threading.Lock()
 is_raspberry_pi = False
+
+# シリアル通信設定（ポンプ制御用）
+SERIAL_PORT = "COM18"  # Windows環境の場合
+BAUD_RATE = 9600
+ser = None
+serial_initialized = False
+
+def initialize_serial():
+    """シリアル通信を初期化"""
+    global ser, serial_initialized
+    try:
+        ser = serial.Serial(SERIAL_PORT, BAUD_RATE, timeout=1)
+        serial_initialized = True
+        print(f"シリアル通信が正常に初期化されました: {SERIAL_PORT}")
+        return True
+    except Exception as e:
+        print(f"シリアル通信初期化エラー: {e}")
+        serial_initialized = False
+        return False
+
+def calc_checksum(data_bytes):
+    """チェックサムを計算"""
+    checksum = 0
+    for b in data_bytes[1:9]:
+        checksum ^= b
+    return checksum
+
+def send_serial_command(pump_no, action, value="000000"):
+    """シリアルコマンドを送信"""
+    if not serial_initialized:
+        print("シリアル通信が初期化されていません")
+        return False
+    
+    try:
+        value_str = value.zfill(6)
+        cmd = bytearray(11)
+        cmd[0] = 0x02
+        cmd[1] = ord(str(pump_no))
+        cmd[2] = ord(action)
+        for i, c in enumerate(value_str):
+            cmd[3 + i] = ord(c)
+        cmd[9] = calc_checksum(cmd)
+        cmd[10] = 0x03
+        ser.write(cmd)
+        print(f"[Pump {pump_no}] 送信: {' '.join(f'{b:02X}' for b in cmd)}")
+        return True
+    except Exception as e:
+        print(f"シリアル送信エラー: {e}")
+        return False
 
 def initialize_camera():
     """カメラを初期化"""
@@ -131,6 +181,11 @@ def index():
     """メインページ"""
     return render_template('index.html')
 
+@app.route('/pump_control')
+def pump_control():
+    """ポンプ制御ページ"""
+    return render_template('pump_control.html')
+
 @app.route('/video_feed')
 def video_feed():
     """ビデオストリーミングエンドポイント"""
@@ -142,6 +197,7 @@ def api_status():
     """カメラ状態API"""
     return jsonify({
         'camera_initialized': camera_initialized,
+        'serial_initialized': serial_initialized,
         'timestamp': time.time()
     })
 
@@ -184,27 +240,55 @@ def api_restart_camera():
             'message': f'エラー: {str(e)}'
         }), 500
 
+@app.route("/api/pump_control")
+def api_pump_control():
+    """ポンプ制御API"""
+    pump = request.args.get("pump", "1")
+    action = request.args.get("action", "M")
+    value = request.args.get("value", "000000")
+    
+    success = send_serial_command(pump, action, value)
+    
+    return jsonify({
+        'success': success,
+        'message': f'送信完了: pump={pump}, action={action}, value={value}' if success else '送信失敗'
+    })
+
 if __name__ == '__main__':
     import argparse
     
     # コマンドライン引数の解析
-    parser = argparse.ArgumentParser(description='ラズパイカメラストリーミングWebサーバー')
+    parser = argparse.ArgumentParser(description='ラズパイカメラストリーミング + ポンプ制御Webサーバー')
     parser.add_argument('--debug', action='store_true', help='デバッグモードで起動')
     parser.add_argument('--port', type=int, default=5000, help='ポート番号（デフォルト: 5000）')
     parser.add_argument('--host', type=str, default='0.0.0.0', help='ホストアドレス（デフォルト: 0.0.0.0）')
+    parser.add_argument('--serial-port', type=str, default='COM18', help='シリアルポート（デフォルト: COM18）')
     
     args = parser.parse_args()
     
+    # シリアルポート設定を更新
+    SERIAL_PORT = args.serial_port
+    
     # カメラ初期化
-    if initialize_camera():
-        print("Webサーバーを起動します...")
-        print(f"ブラウザで http://localhost:{args.port} にアクセスしてください")
-        
-        # 開発サーバー起動（本番環境ではgunicorn等を使用）
-        app.run(host=args.host, port=args.port, debug=args.debug, threaded=True)
-    else:
-        print("カメラの初期化に失敗しました。")
+    camera_success = initialize_camera()
+    
+    # シリアル通信初期化
+    serial_success = initialize_serial()
+    
+    print("Webサーバーを起動します...")
+    print(f"ブラウザで http://localhost:{args.port} にアクセスしてください")
+    print(f"ポンプ制御ページ: http://localhost:{args.port}/pump_control")
+    
+    if not camera_success:
+        print("警告: カメラの初期化に失敗しました。")
         if PICAMERA_AVAILABLE:
             print("ラズパイにカメラモジュールが接続されているか確認してください。")
         else:
-            print("PCにWebカメラが接続されているか確認してください。") 
+            print("PCにWebカメラが接続されているか確認してください。")
+    
+    if not serial_success:
+        print("警告: シリアル通信の初期化に失敗しました。")
+        print(f"シリアルポート {SERIAL_PORT} が利用可能か確認してください。")
+    
+    # 開発サーバー起動（本番環境ではgunicorn等を使用）
+    app.run(host=args.host, port=args.port, debug=args.debug, threaded=True) 
