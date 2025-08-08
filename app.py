@@ -253,6 +253,63 @@ def api_pump_control():
         'message': f'送信完了: pump={pump}, action={action}, value={value}' if success else '送信失敗'
     })
 
+@app.route("/api/get_current")
+def api_get_current():
+    """電流値取得API"""
+    pump = request.args.get("pump", "1")
+    
+    # 電流データ取得コマンドを送信
+    success = send_serial_command(pump, "C", "000000")
+    
+    if not success:
+        return jsonify({
+            'success': False,
+            'current': 0,
+            'message': '送信失敗'
+        })
+    
+    # 応答を待機（最大1秒）
+    import time
+    start_time = time.time()
+    response = None
+    
+    while time.time() - start_time < 1.0:
+        if ser.in_waiting >= 10:  # 10バイトの応答を待機
+            response = ser.read(10)
+            break
+        time.sleep(0.01)
+    
+    if response and len(response) == 10:
+        # 応答フォーマット: STX + ポンプNo + 電流値(符号+5桁整数) + ETX + CS
+        if response[0] == 0x02 and response[8] == 0x03:
+            # チェックサム検証
+            checksum = 0
+            for i in range(1, 8):
+                checksum ^= response[i]
+            
+            if checksum == response[9]:
+                # 電流値を解析
+                current_str = response[2:8].decode('ascii')
+                try:
+                    current = int(current_str)
+                    return jsonify({
+                        'success': True,
+                        'current': current,
+                        'message': f'電流値取得完了: {current}mA'
+                    })
+                except ValueError:
+                    return jsonify({
+                        'success': False,
+                        'current': 0,
+                        'message': '電流値解析エラー'
+                    })
+    
+    return jsonify({
+        'success': False,
+        'current': 0,
+        'message': '応答タイムアウトまたはエラー'
+    })
+
 if __name__ == '__main__':
     import argparse
     

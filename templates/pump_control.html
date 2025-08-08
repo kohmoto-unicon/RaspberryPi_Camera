@@ -196,6 +196,30 @@
       box-shadow: 0 5px 15px rgba(240, 147, 251, 0.4);
     }
 
+    .btn-info {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+      padding: 5px 10px;
+      font-size: 12px;
+    }
+
+    .btn-info:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
+    }
+
+    .current-display {
+      display: inline-block;
+      padding: 8px 12px;
+      background: #f8f9fa;
+      border: 2px solid #ddd;
+      border-radius: 8px;
+      font-weight: 600;
+      color: #333;
+      min-width: 80px;
+      text-align: center;
+    }
+
     .status-indicator {
       display: inline-block;
       width: 12px;
@@ -297,6 +321,14 @@
             </div>
           </div>
 
+          <div class="control-group">
+            <label>電流値:</label>
+            <div class="input-group">
+              <span id="currentValue{{ pump }}" class="current-display">0 mA</span>
+              <button class="btn btn-info" onclick="getCurrent({{ pump }})">取得</button>
+            </div>
+          </div>
+
           <div class="btn-group">
             <button class="btn btn-primary" onclick="sendSteps({{ pump }})">送信</button>
             <button class="btn btn-danger" onclick="sendStop({{ pump }})">停止</button>
@@ -331,6 +363,27 @@
     // 停止
     function sendStop(pump){
       sendPumpCommand(pump, 'S');
+    }
+
+    // 電流値取得
+    async function getCurrent(pump){
+      try {
+        const response = await fetch(`/api/get_current?pump=${pump}`);
+        const data = await response.json();
+        
+        const currentDisplay = document.getElementById('currentValue' + pump);
+        
+        if (data.success) {
+          currentDisplay.textContent = data.current + ' mA';
+          console.log(data.message);
+        } else {
+          currentDisplay.textContent = '0 mA';
+          console.error('電流値取得失敗:', data.message);
+        }
+      } catch (error) {
+        console.error('通信エラー:', error);
+        document.getElementById('currentValue' + pump).textContent = '0 mA';
+      }
     }
 
     // ポンプコマンド送信
