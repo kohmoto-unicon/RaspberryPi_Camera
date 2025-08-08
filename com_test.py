@@ -63,6 +63,13 @@ HTML = """
       </label>
       <span id="dirLabel{{ pump }}">正転</span>
     </p>
+    <p>台形加速:
+      <label class="switch">
+        <input type="checkbox" onchange="toggleAccel({{ pump }}, this.checked)">
+        <span class="slider"></span>
+      </label>
+      <span id="accelLabel{{ pump }}">OFF</span>
+    </p>
     <p>
       ステップ数: <input type="number" id="steps{{ pump }}" value="000000" min="0" max="999999">
     </p>
@@ -77,6 +84,11 @@ HTML = """
       const dir = isReverse ? 'R' : 'F';
       document.getElementById('dirLabel' + pump).innerText = isReverse ? '逆転' : '正転';
       fetch(`/control?pump=${pump}&action=${dir}`);
+    }
+    function toggleAccel(pump, isOn){
+      const val = isOn ? '1' : '0';
+      document.getElementById('accelLabel' + pump).innerText = isOn ? 'ON' : 'OFF';
+      fetch(`/control?pump=${pump}&action=A&value=${val}`);
     }
     function sendSteps(pump){
       const steps = document.getElementById('steps' + pump).value;

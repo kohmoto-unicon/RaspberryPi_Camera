@@ -280,6 +280,17 @@
           </div>
 
           <div class="control-group">
+            <label>台形加速:</label>
+            <div class="input-group">
+              <label class="switch">
+                <input type="checkbox" onchange="toggleAccel({{ pump }}, this.checked)">
+                <span class="slider"></span>
+              </label>
+              <span class="direction-label" id="accelLabel{{ pump }}">OFF</span>
+            </div>
+          </div>
+
+          <div class="control-group">
             <label>ステップ数:</label>
             <div class="input-group">
               <input type="number" id="steps{{ pump }}" value="000000" min="0" max="999999" placeholder="ステップ数を入力">
@@ -302,6 +313,13 @@
       const dir = isReverse ? 'R' : 'F';
       document.getElementById('dirLabel' + pump).innerText = isReverse ? '逆転' : '正転';
       sendPumpCommand(pump, dir);
+    }
+
+    // 台形加速切替
+    function toggleAccel(pump, isOn){
+      const val = isOn ? '1' : '0';
+      document.getElementById('accelLabel' + pump).innerText = isOn ? 'ON' : 'OFF';
+      sendPumpCommand(pump, 'A', val);
     }
 
     // ステップ送信

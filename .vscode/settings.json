@@ -1,0 +1,16 @@
+{
+  "python.defaultInterpreterPath": "${workspaceFolder}/venv/Scripts/python.exe",
+  "terminal.integrated.allowWorkspaceProfile": true,
+  "terminal.integrated.profiles.windows": {
+    "CMD (venv)": {
+      "path": "cmd.exe",
+      "args": [
+        "/K",
+        "${workspaceFolder}\\venv\\Scripts\\activate.bat"
+      ]
+    }
+  },
+  "terminal.integrated.defaultProfile.windows": "CMD (venv)"
+}
+
+    
