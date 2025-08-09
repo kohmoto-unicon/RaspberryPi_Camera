@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>ポンプ制御</title>
+  <title>ハイセラポンプ制御</title>
   <style>
     * {
       margin: 0;
@@ -269,14 +269,14 @@
 <body>
   <div class="container">
     <div class="header">
-      <h1>🔧 ポンプ制御システム</h1>
-      <p>6つのポンプを個別に制御できます</p>
+      <h1>🔧 ハイセラポンプ制御</h1>
     </div>
 
     <div class="content">
       <div class="nav-links">
         <a href="/">📹 カメラストリーミング</a>
-        <a href="/pump_control">🔧 ポンプ制御</a>
+        <a href="/pump_control">🔧 ハイセラポンプ制御</a>
+        <a href="/syringe_pump">💉 シリンジポンプ制御</a>
       </div>
 
       <div class="status">
@@ -290,7 +290,7 @@
       <div class="pump-grid">
         {% for pump in range(1,7) %}
         <div class="pump-box">
-          <h2>ポンプ {{ pump }}</h2>
+          <h2>ハイセラポンプ {{ pump }}</h2>
           
           <div class="control-group">
             <label>正逆切替:</label>

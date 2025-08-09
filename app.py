@@ -33,23 +33,42 @@ frame_buffer = None
 frame_lock = threading.Lock()
 is_raspberry_pi = False
 
-# シリアル通信設定（ポンプ制御用）
-SERIAL_PORT = "COM18"  # Windows環境の場合
+# シリアル通信設定（ハイセラポンプ制御用）
+SERIAL_PORT = "COM18"  # Windows環境の場合（ハイセラポンプ）
 BAUD_RATE = 9600
 ser = None
 serial_initialized = False
 
+# シリアル通信設定（シリンジポンプ制御用）
+SYRINGE_SERIAL_PORT = "COM19"  # Windows環境の場合（シリンジポンプ）
+SYRINGE_BAUD_RATE = 9600
+ser_syringe = None
+syringe_serial_initialized = False
+
 def initialize_serial():
-    """シリアル通信を初期化"""
+    """シリアル通信を初期化（ハイセラポンプ）"""
     global ser, serial_initialized
     try:
         ser = serial.Serial(SERIAL_PORT, BAUD_RATE, timeout=1)
         serial_initialized = True
-        print(f"シリアル通信が正常に初期化されました: {SERIAL_PORT}")
+        print(f"ハイセラポンプ用シリアル通信が正常に初期化されました: {SERIAL_PORT}")
         return True
     except Exception as e:
-        print(f"シリアル通信初期化エラー: {e}")
+        print(f"ハイセラポンプ用シリアル通信初期化エラー: {e}")
         serial_initialized = False
+        return False
+
+def initialize_syringe_serial():
+    """シリアル通信を初期化（シリンジポンプ）"""
+    global ser_syringe, syringe_serial_initialized
+    try:
+        ser_syringe = serial.Serial(SYRINGE_SERIAL_PORT, SYRINGE_BAUD_RATE, timeout=1)
+        syringe_serial_initialized = True
+        print(f"シリンジポンプ用シリアル通信が正常に初期化されました: {SYRINGE_SERIAL_PORT}")
+        return True
+    except Exception as e:
+        print(f"シリンジポンプ用シリアル通信初期化エラー: {e}")
+        syringe_serial_initialized = False
         return False
 
 def calc_checksum(data_bytes):
@@ -185,6 +204,11 @@ def pump_control():
     """ポンプ制御ページ"""
     return render_template('pump_control.html')
 
+@app.route('/syringe_pump')
+def syringe_pump():
+    """シリンジポンプ制御ページ"""
+    return render_template('syringe_pump.html')
+
 @app.route('/video_feed')
 def video_feed():
     """ビデオストリーミングエンドポイント"""
@@ -196,7 +220,9 @@ def api_status():
     """カメラ状態API"""
     return jsonify({
         'camera_initialized': camera_initialized,
-        'serial_initialized': serial_initialized,
+        'serial_initialized': serial_initialized,  # 後方互換（ハイセラポンプ）
+        'hysera_serial_initialized': serial_initialized,
+        'syringe_serial_initialized': syringe_serial_initialized,
         'timestamp': time.time()
     })
 
@@ -318,18 +344,21 @@ if __name__ == '__main__':
     parser.add_argument('--debug', action='store_true', help='デバッグモードで起動')
     parser.add_argument('--port', type=int, default=5000, help='ポート番号（デフォルト: 5000）')
     parser.add_argument('--host', type=str, default='0.0.0.0', help='ホストアドレス（デフォルト: 0.0.0.0）')
-    parser.add_argument('--serial-port', type=str, default='COM18', help='シリアルポート（デフォルト: COM18）')
+    parser.add_argument('--serial-port', type=str, default='COM18', help='ハイセラポンプ用シリアルポート（デフォルト: COM18）')
+    parser.add_argument('--syringe-serial-port', type=str, default='COM19', help='シリンジポンプ用シリアルポート（デフォルト: COM19）')
     
     args = parser.parse_args()
     
-    # シリアルポート設定を更新
+    # シリアルポート設定を更新（ハイセラ／シリンジ）
     SERIAL_PORT = args.serial_port
+    SYRINGE_SERIAL_PORT = args.syringe_serial_port
     
     # カメラ初期化
     camera_success = initialize_camera()
     
-    # シリアル通信初期化
+    # シリアル通信初期化（ハイセラ／シリンジ）
     serial_success = initialize_serial()
+    syringe_serial_success = initialize_syringe_serial()
     
     print("Webサーバーを起動します...")
     print(f"ブラウザで http://localhost:{args.port} にアクセスしてください")
@@ -343,8 +372,11 @@ if __name__ == '__main__':
             print("PCにWebカメラが接続されているか確認してください。")
     
     if not serial_success:
-        print("警告: シリアル通信の初期化に失敗しました。")
+        print("警告: ハイセラポンプ用シリアル通信の初期化に失敗しました。")
         print(f"シリアルポート {SERIAL_PORT} が利用可能か確認してください。")
+    if not syringe_serial_success:
+        print("警告: シリンジポンプ用シリアル通信の初期化に失敗しました。")
+        print(f"シリアルポート {SYRINGE_SERIAL_PORT} が利用可能か確認してください。")
     
     # 開発サーバー起動（本番環境ではgunicorn等を使用）
     app.run(host=args.host, port=args.port, debug=args.debug, threaded=True) 

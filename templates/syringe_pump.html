@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>シリンジポンプ制御</title>
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); min-height: 100vh; padding: 20px; margin: 0; }
+        .container { max-width: 1200px; margin: 0 auto; background: rgba(255, 255, 255, 0.95); border-radius: 20px; box-shadow: 0 20px 40px rgba(0, 0, 0, 0.1); overflow: hidden; }
+        .header { background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%); color: #fff; padding: 30px; text-align: center; }
+        .header h1 { font-size: 2.5em; margin: 0 0 10px; text-shadow: 2px 2px 4px rgba(0,0,0,0.3); }
+        .content { padding: 30px; }
+        .nav-links { text-align: center; margin-bottom: 20px; }
+        .nav-links a { display: inline-block; padding: 10px 20px; margin: 0 10px; background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%); color: white; text-decoration: none; border-radius: 25px; font-weight: 600; transition: all 0.3s ease; }
+        .nav-links a:hover { transform: translateY(-2px); box-shadow: 0 5px 15px rgba(79, 172, 254, 0.4); }
+        .card { background: #fff; border-radius: 16px; padding: 20px; box-shadow: 0 10px 30px rgba(0,0,0,0.08); }
+        .status { margin-bottom: 20px; }
+        .status h3 { margin: 0; }
+        .status p { margin: 0; }
+        .status-indicator { display: inline-block; width: 12px; height: 12px; border-radius: 50%; margin-right: 8px; background: #28a745; }
+        .pump-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px; margin-top: 20px; }
+        .pump-box { border: 2px solid #e0e0e0; padding: 20px; border-radius: 15px; background: #fff; box-shadow: 0 5px 15px rgba(0,0,0,0.1); transition: all 0.3s ease; }
+        .pump-box:hover { transform: translateY(-5px); box-shadow: 0 10px 25px rgba(0,0,0,0.15); }
+        .pump-box h2 { margin: 0 0 15px; color: #333; font-size: 1.5em; text-align: center; }
+        .control-group { margin-bottom: 15px; }
+        .input-group { display: flex; align-items: center; gap: 10px; flex-wrap: nowrap; }
+        .control-group label { display: block; margin-bottom: 8px; font-weight: 600; color: #555; }
+        select { width: 100%; padding: 10px 12px; border: 2px solid #ddd; border-radius: 8px; font-size: 14px; }
+        .input-group select { width: auto; min-width: 72px; }
+        select:focus { outline: none; border-color: #4facfe; }
+        .btn { white-space: nowrap; }
+        .muted { color: #666; }
+        .placeholder { padding: 30px; text-align: center; color: #666; border: 2px dashed #cfd8dc; border-radius: 12px; background: #fafbfc; }
+        .actions { margin-top: 20px; text-align: center; }
+        .btn { padding: 12px 24px; border: none; border-radius: 25px; font-size: 1em; font-weight: 600; cursor: pointer; text-decoration: none; display: inline-block; }
+        .btn-primary { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: #fff; }
+        .pump-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px; margin-top: 20px; }
+        .pump-box { border: 2px solid #e0e0e0; padding: 20px; border-radius: 15px; background: #fff; box-shadow: 0 5px 15px rgba(0,0,0,0.1); transition: all 0.3s ease; }
+        .pump-box:hover { transform: translateY(-5px); box-shadow: 0 10px 25px rgba(0,0,0,0.15); }
+        .pump-box h2 { margin: 0 0 15px; color: #333; font-size: 1.5em; text-align: center; }
+        .control-group { margin-bottom: 15px; }
+        .control-group label { display: block; margin-bottom: 8px; font-weight: 600; color: #555; }
+        select { width: 100%; padding: 10px 12px; border: 2px solid #ddd; border-radius: 8px; font-size: 14px; }
+        select:focus { outline: none; border-color: #4facfe; }
+    </style>
+    <script>
+        async function checkStatus() {
+            try {
+                const response = await fetch('/api/status');
+                const data = await response.json();
+                const syringeOnline = !!data.syringe_serial_initialized;
+                const syringeIndicator = document.getElementById('syringeStatus');
+                const syringeText = document.getElementById('syringeStatusText');
+                if (syringeOnline) {
+                    syringeIndicator.style.background = '#28a745';
+                    syringeText.textContent = 'シリアル通信: オンライン';
+                } else {
+                    syringeIndicator.style.background = '#dc3545';
+                    syringeText.textContent = 'シリアル通信: オフライン';
+                }
+            } catch (e) {
+                console.error('状態確認に失敗しました', e);
+            }
+        }
+
+        document.addEventListener('DOMContentLoaded', () => {
+            // 状態表示の定期更新
+            checkStatus();
+            setInterval(checkStatus, 30000);
+
+            // 6台分のアドレス初期化（1..6 をユニークに割当）＋ローカル保存
+            const defaultAddresses = {1:1, 2:2, 3:3, 4:4, 5:5, 6:6};
+            for (let pump = 1; pump <= 6; pump++) {
+                const select = document.getElementById(`addr${pump}`);
+                if (!select) continue;
+                const key = `syringe_addr_p${pump}`;
+                const saved = localStorage.getItem(key);
+                let initial = saved ? Number(saved) : defaultAddresses[pump];
+                if (initial < 1 || initial > 6 || Number.isNaN(initial)) initial = defaultAddresses[pump];
+                select.value = String(initial);
+                if (!saved) localStorage.setItem(key, String(initial));
+                select.addEventListener('change', () => {
+                    localStorage.setItem(key, select.value);
+                });
+                // 初期化ボタン（ポンプへ初期化コマンド送信予定。現状はプレースホルダー）
+                const initBtn = document.getElementById(`initBtn${pump}`);
+                if (initBtn) {
+                    initBtn.addEventListener('click', async () => {
+                        // TODO: APIに初期化コマンド送信を実装予定
+                        // ここでは確認用のトースト/ログのみ
+                        console.log(`Init command requested for syringe pump #${pump}`);
+                        initBtn.disabled = true;
+                        initBtn.textContent = '送信中...';
+                        setTimeout(() => {
+                            initBtn.disabled = false;
+                            initBtn.textContent = '初期化';
+                        }, 600);
+                    });
+                }
+            }
+        });
+    </script>
+    </head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>💉 シリンジポンプ制御</h1>
+        </div>
+
+        <div class="content">
+            <div class="nav-links">
+                <a href="/">📹 カメラストリーミング</a>
+                <a href="/pump_control">🔧 ハイセラポンプ制御</a>
+                <a href="/syringe_pump">💉 シリンジポンプ制御</a>
+            </div>
+
+            <div class="status">
+                <h3>📊 システム状態</h3>
+                <p>
+                    <span class="status-indicator" id="syringeStatus"></span>
+                    <span id="syringeStatusText">シリアル通信: 確認中...</span>
+                </p>
+            </div>
+
+            <div class="pump-grid">
+                {% for pump in range(1,7) %}
+                <div class="pump-box">
+                    <h2>シリンジポンプ {{ pump }}</h2>
+                    <div class="control-group">
+                        <label for="addr{{ pump }}">アドレス</label>
+                        <div class="input-group">
+                        <select id="addr{{ pump }}" data-pump="{{ pump }}">
+                            <option value="1">1</option>
+                            <option value="2">2</option>
+                            <option value="3">3</option>
+                            <option value="4">4</option>
+                            <option value="5">5</option>
+                            <option value="6">6</option>
+                        </select>
+                        <button type="button" class="btn btn-primary" id="initBtn{{ pump }}" data-pump="{{ pump }}">初期化</button>
+                        </div>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+    </div>
+</body>
+</html>
+
+
