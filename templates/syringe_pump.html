@@ -140,6 +140,34 @@
                         <button type="button" class="btn btn-primary" id="initBtn{{ pump }}" data-pump="{{ pump }}">初期化</button>
                         </div>
                     </div>
+                    
+                    <div class="control-group">
+                        <div class="input-group">
+                            <select id="steps{{ pump }}" data-pump="{{ pump }}">
+                                <option value="1000">1000</option>
+                                <option value="2000">2000</option>
+                                <option value="3000" selected>3000</option>
+                                <option value="4000">4000</option>
+                                <option value="5000">5000</option>
+                                <option value="6000">6000</option>
+                            </select>
+                            <button type="button" class="btn btn-primary" id="upBtn{{ pump }}" data-pump="{{ pump }}">上移動</button>
+                        </div>
+                    </div>
+                    
+                    <div class="control-group">
+                        <div class="input-group">
+                            <select id="downSteps{{ pump }}" data-pump="{{ pump }}">
+                                <option value="1000">1000</option>
+                                <option value="2000">2000</option>
+                                <option value="3000" selected>3000</option>
+                                <option value="4000">4000</option>
+                                <option value="5000">5000</option>
+                                <option value="6000">6000</option>
+                            </select>
+                            <button type="button" class="btn btn-primary" id="downBtn{{ pump }}" data-pump="{{ pump }}">下移動</button>
+                        </div>
+                    </div>
                 </div>
                 {% endfor %}
             </div>
