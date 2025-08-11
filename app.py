@@ -11,6 +11,7 @@ from flask import Flask, render_template, Response, jsonify, request
 import cv2
 import io
 import serial
+from command import SyringePumpController
 
 # Raspberry Pi専用ライブラリのインポート（PCでは利用不可）
 try:
@@ -44,6 +45,7 @@ SYRINGE_SERIAL_PORT = "COM19"  # Windows環境の場合（シリンジポンプ�
 SYRINGE_BAUD_RATE = 9600
 ser_syringe = None
 syringe_serial_initialized = False
+syringe_pump_controllers = []  # シリンジポンプ制御インスタンスのリスト
 
 def initialize_serial():
     """シリアル通信を初期化（ハイセラポンプ）"""
@@ -60,11 +62,19 @@ def initialize_serial():
 
 def initialize_syringe_serial():
     """シリアル通信を初期化（シリンジポンプ）"""
-    global ser_syringe, syringe_serial_initialized
+    global ser_syringe, syringe_serial_initialized, syringe_pump_controllers
     try:
         ser_syringe = serial.Serial(SYRINGE_SERIAL_PORT, SYRINGE_BAUD_RATE, timeout=1)
         syringe_serial_initialized = True
+        
+        # 6個のポンプ制御インスタンスを作成
+        syringe_pump_controllers.clear()
+        for i in range(1, 7):
+            controller = SyringePumpController(i, ser_syringe)
+            syringe_pump_controllers.append(controller)
+        
         print(f"シリンジポンプ用シリアル通信が正常に初期化されました: {SYRINGE_SERIAL_PORT}")
+        print(f"6個のポンプ制御インスタンスを作成しました")
         return True
     except Exception as e:
         print(f"シリンジポンプ用シリアル通信初期化エラー: {e}")
@@ -130,7 +140,7 @@ def initialize_camera():
                 # カメラ設定
                 camera.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
                 camera.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
-                camera.set(cv2.CAP_PROP_FPS, 30)
+                camera.set(cv2.CAP_PROP_FPS, 60)
                 
                 is_raspberry_pi = False
                 camera_initialized = True
@@ -335,6 +345,77 @@ def api_get_current():
         'current': 0,
         'message': '応答タイムアウトまたはエラー'
     })
+
+@app.route("/api/syringe_pump_control")
+def api_syringe_pump_control():
+    """シリンジポンプ制御API"""
+    pump_index = request.args.get("pump", "1")
+    action = request.args.get("action", "")
+    steps = request.args.get("steps", "3000")
+    
+    try:
+        pump_index = int(pump_index) - 1  # 0ベースのインデックスに変換
+        if pump_index < 0:
+            return jsonify({
+                'success': False,
+                'message': f'無効なポンプ番号: {pump_index + 1}'
+            })
+        
+        # シリアル未初期化でも、コマンド内容は返すため一時コントローラを生成
+        if 0 <= pump_index < len(syringe_pump_controllers):
+            controller = syringe_pump_controllers[pump_index]
+        else:
+            controller = SyringePumpController(pump_index + 1, ser_syringe)
+        
+        # フロントエンドから選択されたアドレスを取得
+        selected_address = request.args.get("address", "1")
+        try:
+            selected_address = int(selected_address)
+        except ValueError:
+            selected_address = 1
+        
+        if action == "initialize":
+            success, command_bytes = controller.send_command("ZR", selected_address)
+            message = "初期化コマンド送信完了" if success else "初期化コマンド送信失敗"
+        elif action == "move_up":
+            success, command_bytes = controller.send_command(f"D{steps}", selected_address)
+            message = f"上移動コマンド送信完了（{steps}ステップ）" if success else "上移動コマンド送信失敗"
+        elif action == "move_down":
+            success, command_bytes = controller.send_command(f"P{steps}", selected_address)
+            message = f"下移動コマンド送信完了（{steps}ステップ）" if success else "下移動コマンド送信失敗"
+        elif action == "stop":
+            success, command_bytes = controller.send_command("TR", selected_address)
+            message = "停止コマンド送信完了" if success else "停止コマンド送信失敗"
+        elif action == "loop":
+            # ループコマンド: "P" + 下移動ステップ数 + "D" + 上移動ステップ数 + "G" + ループ数
+            down_steps = request.args.get("downSteps", "3000")
+            up_steps = request.args.get("steps", "3000")
+            loop_count = request.args.get("loopCount", "0")
+            loop_command = f"P{down_steps}D{up_steps}G{loop_count}R"
+            success, command_bytes = controller.send_command(loop_command, selected_address)
+            message = f"ループコマンド送信完了（下:{down_steps}、上:{up_steps}、ループ:{loop_count}）" if success else "ループコマンド送信失敗"
+        elif action == "qr":
+            success, command_bytes = controller.send_command("QR", selected_address)
+            message = "ステータス確認コマンド送信完了" if success else "ステータス確認コマンド送信失敗"
+        else:
+            return jsonify({
+                'success': False,
+                'message': f'無効なアクション: {action}'
+            })
+        
+        return jsonify({
+            'success': success,
+            'message': message,
+            'pump': pump_index + 1,
+            'action': action,
+            'command_bytes': list(command_bytes) if command_bytes else []
+        })
+        
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'message': f'エラーが発生しました: {str(e)}'
+        })
 
 if __name__ == '__main__':
     import argparse
