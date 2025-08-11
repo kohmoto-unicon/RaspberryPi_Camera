@@ -501,14 +501,14 @@ void processCommand(byte* cmd) {
       response[2 + i] = currentStr[i];
     }
     
-    response[8] = 0x03;  // ETX
-    
     // チェックサム計算
     byte checksum = 0;
     for (int i = 1; i <= 7; i++) {
       checksum ^= response[i];
     }
-    response[9] = checksum;
+    response[8] = checksum;
+    
+    response[9] = 0x03;  // ETX
     
     // 応答を送信
     Serial.write(response, 10);

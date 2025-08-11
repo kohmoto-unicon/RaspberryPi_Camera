@@ -425,14 +425,14 @@ def api_get_current():
         time.sleep(0.01)
     
     if response and len(response) == 10:
-        # 応答フォーマット: STX + ポンプNo + 電流値(符号+5桁整数) + ETX + CS
-        if response[0] == 0x02 and response[8] == 0x03:
+        # 応答フォーマット: STX + ポンプNo + 電流値(符号+5桁整数) + CS + ETX
+        if response[0] == 0x02 and response[9] == 0x03:
             # チェックサム検証
             checksum = 0
             for i in range(1, 8):
                 checksum ^= response[i]
             
-            if checksum == response[9]:
+            if checksum == response[8]:
                 # 電流値を解析
                 current_str = response[2:8].decode('ascii')
                 try:
