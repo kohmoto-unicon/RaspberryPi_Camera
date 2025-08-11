@@ -220,6 +220,24 @@
       text-align: center;
     }
 
+    .command-display {
+      width: 100%;
+      padding: 8px;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+      font-family: monospace;
+      font-size: 12px;
+      resize: vertical;
+      background-color: #f8f9fa;
+      color: #333;
+    }
+
+    .command-display:focus {
+      outline: none;
+      border-color: #4facfe;
+      background-color: white;
+    }
+
     .status-indicator {
       display: inline-block;
       width: 12px;
@@ -282,8 +300,12 @@
       <div class="status">
         <h3>📊 システム状態</h3>
         <p>
-          <span class="status-indicator" id="serialStatus"></span>
-          <span id="statusText">シリアル通信状態を確認中...</span>
+          <span class="status-indicator" id="serialStatus1"></span>
+          <span id="statusText1">COM18（ポンプ1-3）: 確認中...</span>
+        </p>
+        <p>
+          <span class="status-indicator" id="serialStatus2"></span>
+          <span id="statusText2">COM20（ポンプ4-6）: 確認中...</span>
         </p>
       </div>
 
@@ -333,6 +355,11 @@
             <button class="btn btn-primary" onclick="sendSteps({{ pump }})">送信</button>
             <button class="btn btn-danger" onclick="sendStop({{ pump }})">停止</button>
           </div>
+
+          <div class="control-group">
+            <label for="commandDisplay{{ pump }}">送信コマンド</label>
+            <textarea id="commandDisplay{{ pump }}" rows="3" class="command-display" readonly placeholder="コマンドが送信されるとここに表示されます"></textarea>
+          </div>
         </div>
         {% endfor %}
       </div>
@@ -340,6 +367,41 @@
   </div>
 
   <script>
+    // コマンドバイトを16進数とASCII文字の混合形式でフォーマット
+    function formatCommandBytes(bytes, pump) {
+      // ポンプ番号に応じてポート名を決定
+      let portName;
+      if (1 <= pump && pump <= 3) {
+        portName = 'COM18';
+      } else if (4 <= pump && pump <= 6) {
+        portName = 'COM20';
+      } else {
+        portName = 'UNKNOWN';
+      }
+      
+      let result = [portName + '→'];
+      for (let i = 0; i < bytes.length; i++) {
+        if (i === 0) {
+          // STX (0x02)
+          result.push('STX');
+        } else if (i === 10) {
+          // ETX (0x03)
+          result.push('ETX');
+        } else if (i === 9) {
+          // チェックサムは16進数で表示
+          result.push('0x' + bytes[i].toString(16).padStart(2, '0').toUpperCase());
+        } else {
+          // その他はASCII文字で表示（シングルクォートなし）
+          if (bytes[i] >= 32 && bytes[i] <= 126) {
+            result.push(String.fromCharCode(bytes[i]));
+          } else {
+            result.push('0x' + bytes[i].toString(16).padStart(2, '0').toUpperCase());
+          }
+        }
+      }
+      return result.join(' ');
+    }
+
     // 方向切替
     function toggleDirection(pump, isReverse){
       const dir = isReverse ? 'R' : 'F';
@@ -373,6 +435,15 @@
         
         const currentDisplay = document.getElementById('currentValue' + pump);
         
+        // 送信コマンドの内容を表示
+        if (data.command_bytes && data.command_bytes.length > 0) {
+          const commandDisplay = document.getElementById('commandDisplay' + pump);
+          if (commandDisplay) {
+            const commandBytes = new Uint8Array(data.command_bytes);
+            commandDisplay.value = formatCommandBytes(commandBytes, pump);
+          }
+        }
+        
         if (data.success) {
           currentDisplay.textContent = data.current + ' mA';
           console.log(data.message);
@@ -392,6 +463,15 @@
         const response = await fetch(`/api/pump_control?pump=${pump}&action=${action}&value=${value}`);
         const data = await response.json();
         
+        // 送信コマンドの内容を表示
+        if (data.command_bytes && data.command_bytes.length > 0) {
+          const commandDisplay = document.getElementById('commandDisplay' + pump);
+          if (commandDisplay) {
+            const commandBytes = new Uint8Array(data.command_bytes);
+            commandDisplay.value = formatCommandBytes(commandBytes, pump);
+          }
+        }
+        
         if (data.success) {
           console.log(data.message);
         } else {
@@ -408,15 +488,27 @@
         const response = await fetch('/api/status');
         const data = await response.json();
         
-        const statusIndicator = document.getElementById('serialStatus');
-        const statusText = document.getElementById('statusText');
+        const statusIndicator1 = document.getElementById('serialStatus1');
+        const statusText1 = document.getElementById('statusText1');
+        const statusIndicator2 = document.getElementById('serialStatus2');
+        const statusText2 = document.getElementById('statusText2');
         
-        if (data.serial_initialized) {
-          statusIndicator.style.background = '#28a745';
-          statusText.textContent = 'シリアル通信: オンライン';
+        // COM18（ポンプ1-3）の状態
+        if (data.hysera_port1_status) {
+          statusIndicator1.style.background = '#28a745';
+          statusText1.textContent = 'COM18（ポンプ1-3）: オンライン';
         } else {
-          statusIndicator.style.background = '#dc3545';
-          statusText.textContent = 'シリアル通信: オフライン';
+          statusIndicator1.style.background = '#dc3545';
+          statusText1.textContent = 'COM18（ポンプ1-3）: オフライン';
+        }
+        
+        // COM20（ポンプ4-6）の状態
+        if (data.hysera_port2_status) {
+          statusIndicator2.style.background = '#28a745';
+          statusText2.textContent = 'COM20（ポンプ4-6）: オンライン';
+        } else {
+          statusIndicator2.style.background = '#dc3545';
+          statusText2.textContent = 'COM20（ポンプ4-6）: オフライン';
         }
         
       } catch (error) {

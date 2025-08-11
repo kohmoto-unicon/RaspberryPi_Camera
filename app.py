@@ -35,9 +35,11 @@ frame_lock = threading.Lock()
 is_raspberry_pi = False
 
 # シリアル通信設定（ハイセラポンプ制御用）
-SERIAL_PORT = "COM18"  # Windows環境の場合（ハイセラポンプ）
+SERIAL_PORT_1 = "COM18"  # Windows環境の場合（ハイセラポンプ1-3用）
+SERIAL_PORT_2 = "COM20"  # Windows環境の場合（ハイセラポンプ4-6用）
 BAUD_RATE = 9600
-ser = None
+ser_1 = None  # ポンプ1-3用
+ser_2 = None  # ポンプ4-6用
 serial_initialized = False
 
 # シリアル通信設定（シリンジポンプ制御用）
@@ -49,11 +51,17 @@ syringe_pump_controllers = []  # シリンジポンプ制御インスタンス�
 
 def initialize_serial():
     """シリアル通信を初期化（ハイセラポンプ）"""
-    global ser, serial_initialized
+    global ser_1, ser_2, serial_initialized
     try:
-        ser = serial.Serial(SERIAL_PORT, BAUD_RATE, timeout=1)
+        # ポンプ1-3用のCOMポートを初期化
+        ser_1 = serial.Serial(SERIAL_PORT_1, BAUD_RATE, timeout=1)
+        print(f"ハイセラポンプ1-3用シリアル通信が正常に初期化されました: {SERIAL_PORT_1}")
+        
+        # ポンプ4-6用のCOMポートを初期化
+        ser_2 = serial.Serial(SERIAL_PORT_2, BAUD_RATE, timeout=1)
+        print(f"ハイセラポンプ4-6用シリアル通信が正常に初期化されました: {SERIAL_PORT_2}")
+        
         serial_initialized = True
-        print(f"ハイセラポンプ用シリアル通信が正常に初期化されました: {SERIAL_PORT}")
         return True
     except Exception as e:
         print(f"ハイセラポンプ用シリアル通信初期化エラー: {e}")
@@ -95,17 +103,31 @@ def send_serial_command(pump_no, action, value="000000"):
         return False
     
     try:
+        # ポンプ番号に応じて適切なシリアルポートを選択し、コマンド番号を変換
+        if 1 <= pump_no <= 3:
+            target_ser = ser_1
+            port_name = f"COM1-3({SERIAL_PORT_1})"
+            command_pump_no = pump_no  # そのまま
+        elif 4 <= pump_no <= 6:
+            target_ser = ser_2
+            port_name = f"COM4-6({SERIAL_PORT_2})"
+            command_pump_no = pump_no - 3  # 4→1, 5→2, 6→3
+        else:
+            print(f"無効なポンプ番号: {pump_no}")
+            return False
+        
         value_str = value.zfill(6)
         cmd = bytearray(11)
         cmd[0] = 0x02
-        cmd[1] = ord(str(pump_no))
+        cmd[1] = ord(str(command_pump_no))  # 変換されたコマンド番号を使用
         cmd[2] = ord(action)
         for i, c in enumerate(value_str):
             cmd[3 + i] = ord(c)
         cmd[9] = calc_checksum(cmd)
         cmd[10] = 0x03
-        ser.write(cmd)
-        print(f"[Pump {pump_no}] 送信: {' '.join(f'{b:02X}' for b in cmd)}")
+        
+        target_ser.write(cmd)
+        print(f"[Pump {pump_no}] {port_name} に送信: {' '.join(f'{b:02X}' for b in cmd)} (コマンド番号: {command_pump_no})")
         return True
     except Exception as e:
         print(f"シリアル送信エラー: {e}")
@@ -233,6 +255,8 @@ def api_status():
         'serial_initialized': serial_initialized,  # 後方互換（ハイセラポンプ）
         'hysera_serial_initialized': serial_initialized,
         'syringe_serial_initialized': syringe_serial_initialized,
+        'hysera_port1_status': serial_initialized and ser_1 is not None,  # COM18（ポンプ1-3）
+        'hysera_port2_status': serial_initialized and ser_2 is not None,  # COM20（ポンプ4-6）
         'timestamp': time.time()
     })
 
@@ -282,17 +306,86 @@ def api_pump_control():
     action = request.args.get("action", "M")
     value = request.args.get("value", "000000")
     
+    try:
+        pump = int(pump)
+    except ValueError:
+        return jsonify({
+            'success': False,
+            'message': f'無効なポンプ番号: {pump}',
+            'command_bytes': []
+        })
+    
+    # コマンドの内容を生成（送信前に）
+    value_str = value.zfill(6)
+    cmd = bytearray(11)
+    cmd[0] = 0x02
+    
+    # ポンプ番号に応じてコマンド番号を変換
+    if 1 <= pump <= 3:
+        command_pump_no = pump  # そのまま
+    elif 4 <= pump <= 6:
+        command_pump_no = pump - 3  # 4→1, 5→2, 6→3
+    else:
+        return jsonify({
+            'success': False,
+            'message': f'無効なポンプ番号: {pump}',
+            'command_bytes': []
+        })
+    
+    cmd[1] = ord(str(command_pump_no))  # 変換されたコマンド番号を使用
+    cmd[2] = ord(action)
+    for i, c in enumerate(value_str):
+        cmd[3 + i] = ord(c)
+    cmd[9] = calc_checksum(cmd)
+    cmd[10] = 0x03
+    
     success = send_serial_command(pump, action, value)
     
     return jsonify({
         'success': success,
-        'message': f'送信完了: pump={pump}, action={action}, value={value}' if success else '送信失敗'
+        'message': f'送信完了: pump={pump}, action={action}, value={value}' if success else '送信失敗',
+        'command_bytes': list(cmd)  # 送信コマンドの内容を追加
     })
 
 @app.route("/api/get_current")
 def api_get_current():
     """電流値取得API"""
     pump = request.args.get("pump", "1")
+    
+    try:
+        pump = int(pump)
+    except ValueError:
+        return jsonify({
+            'success': False,
+            'current': 0,
+            'message': f'無効なポンプ番号: {pump}',
+            'command_bytes': []
+        })
+    
+    # 電流データ取得コマンドを生成（送信前に）
+    value_str = "000000"
+    cmd = bytearray(11)
+    cmd[0] = 0x02
+    
+    # ポンプ番号に応じてコマンド番号を変換
+    if 1 <= pump <= 3:
+        command_pump_no = pump  # そのまま
+    elif 4 <= pump <= 6:
+        command_pump_no = pump - 3  # 4→1, 5→2, 6→3
+    else:
+        return jsonify({
+            'success': False,
+            'current': 0,
+            'message': f'無効なポンプ番号: {pump}',
+            'command_bytes': list(cmd)
+        })
+    
+    cmd[1] = ord(str(command_pump_no))  # 変換されたコマンド番号を使用
+    cmd[2] = ord("C")  # 電流値取得コマンド
+    for i, c in enumerate(value_str):
+        cmd[3 + i] = ord(c)
+    cmd[9] = calc_checksum(cmd)
+    cmd[10] = 0x03
     
     # 電流データ取得コマンドを送信
     success = send_serial_command(pump, "C", "000000")
@@ -301,7 +394,8 @@ def api_get_current():
         return jsonify({
             'success': False,
             'current': 0,
-            'message': '送信失敗'
+            'message': '送信失敗',
+            'command_bytes': list(cmd)  # 送信コマンドの内容を追加
         })
     
     # 応答を待機（最大1秒）
@@ -309,9 +403,24 @@ def api_get_current():
     start_time = time.time()
     response = None
     
+    # ポンプ番号に応じて適切なシリアルポートを選択
+    if 1 <= pump <= 3:
+        target_ser = ser_1
+        port_name = f"COM1-3({SERIAL_PORT_1})"
+    elif 4 <= pump <= 6:
+        target_ser = ser_2
+        port_name = f"COM4-6({SERIAL_PORT_2})"
+    else:
+        return jsonify({
+            'success': False,
+            'current': 0,
+            'message': f'無効なポンプ番号: {pump}',
+            'command_bytes': list(cmd)
+        })
+    
     while time.time() - start_time < 1.0:
-        if ser.in_waiting >= 10:  # 10バイトの応答を待機
-            response = ser.read(10)
+        if target_ser.in_waiting >= 10:  # 10バイトの応答を待機
+            response = target_ser.read(10)
             break
         time.sleep(0.01)
     
@@ -331,19 +440,22 @@ def api_get_current():
                     return jsonify({
                         'success': True,
                         'current': current,
-                        'message': f'電流値取得完了: {current}mA'
+                        'message': f'電流値取得完了: {current}mA',
+                        'command_bytes': list(cmd)  # 送信コマンドの内容を追加
                     })
                 except ValueError:
                     return jsonify({
                         'success': False,
                         'current': 0,
-                        'message': '電流値解析エラー'
+                        'message': '電流値解析エラー',
+                        'command_bytes': list(cmd)  # 送信コマンドの内容を追加
                     })
     
     return jsonify({
         'success': False,
         'current': 0,
-        'message': '応答タイムアウトまたはエラー'
+        'message': '応答タイムアウトまたはエラー',
+        'command_bytes': list(cmd)  # 送信コマンドの内容を追加
     })
 
 @app.route("/api/syringe_pump_control")
@@ -425,13 +537,15 @@ if __name__ == '__main__':
     parser.add_argument('--debug', action='store_true', help='デバッグモードで起動')
     parser.add_argument('--port', type=int, default=5000, help='ポート番号（デフォルト: 5000）')
     parser.add_argument('--host', type=str, default='0.0.0.0', help='ホストアドレス（デフォルト: 0.0.0.0）')
-    parser.add_argument('--serial-port', type=str, default='COM18', help='ハイセラポンプ用シリアルポート（デフォルト: COM18）')
+    parser.add_argument('--serial-port-1', type=str, default='COM18', help='ハイセラポンプ1-3用シリアルポート（デフォルト: COM18）')
+    parser.add_argument('--serial-port-2', type=str, default='COM20', help='ハイセラポンプ4-6用シリアルポート（デフォルト: COM20）')
     parser.add_argument('--syringe-serial-port', type=str, default='COM19', help='シリンジポンプ用シリアルポート（デフォルト: COM19）')
     
     args = parser.parse_args()
     
     # シリアルポート設定を更新（ハイセラ／シリンジ）
-    SERIAL_PORT = args.serial_port
+    SERIAL_PORT_1 = args.serial_port_1
+    SERIAL_PORT_2 = args.serial_port_2
     SYRINGE_SERIAL_PORT = args.syringe_serial_port
     
     # カメラ初期化
@@ -454,7 +568,7 @@ if __name__ == '__main__':
     
     if not serial_success:
         print("警告: ハイセラポンプ用シリアル通信の初期化に失敗しました。")
-        print(f"シリアルポート {SERIAL_PORT} が利用可能か確認してください。")
+        print(f"シリアルポート {SERIAL_PORT_1}（ポンプ1-3用）または {SERIAL_PORT_2}（ポンプ4-6用）が利用可能か確認してください。")
     if not syringe_serial_success:
         print("警告: シリンジポンプ用シリアル通信の初期化に失敗しました。")
         print(f"シリアルポート {SYRINGE_SERIAL_PORT} が利用可能か確認してください。")

@@ -96,10 +96,10 @@
                 const syringeText = document.getElementById('syringeStatusText');
                 if (syringeOnline) {
                     syringeIndicator.style.background = '#28a745';
-                    syringeText.textContent = 'シリアル通信: オンライン';
+                    syringeText.textContent = 'COM19（シリンジポンプ）: オンライン';
                 } else {
                     syringeIndicator.style.background = '#dc3545';
-                    syringeText.textContent = 'シリアル通信: オフライン';
+                    syringeText.textContent = 'COM19（シリンジポンプ）: オフライン';
                 }
             } catch (e) {
                 console.error('状態確認に失敗しました', e);
@@ -420,7 +420,7 @@
                 <h3>📊 システム状態</h3>
                 <p>
                     <span class="status-indicator" id="syringeStatus"></span>
-                    <span id="syringeStatusText">シリアル通信: 確認中...</span>
+                    <span id="syringeStatusText">COM19（シリンジポンプ）: 確認中...</span>
                 </p>
             </div>
 
