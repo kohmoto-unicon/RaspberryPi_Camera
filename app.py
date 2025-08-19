@@ -40,7 +40,8 @@ SERIAL_PORT_2 = "COM20"  # Windows環境の場合（ハイセラポンプ4-6用�
 BAUD_RATE = 9600
 ser_1 = None  # ポンプ1-3用
 ser_2 = None  # ポンプ4-6用
-serial_initialized = False
+serial_initialized1 = False # ポンプ1-3用シリアル通信初期化フラグ
+serial_initialized2 = False # ポンプ4-6用シリアル通信初期化フラグ
 
 # シリアル通信設定（シリンジポンプ制御用）
 SYRINGE_SERIAL_PORT = "COM19"  # Windows環境の場合（シリンジポンプ）
@@ -51,22 +52,29 @@ syringe_pump_controllers = []  # シリンジポンプ制御インスタンス�
 
 def initialize_serial():
     """シリアル通信を初期化（ハイセラポンプ）"""
-    global ser_1, ser_2, serial_initialized
+    global ser_1, ser_2, serial_initialized_1, serial_initialized_2
     try:
-        # ポンプ1-3用のCOMポートを初期化
+        # COM18の初期化
+        print(f"ポート {SERIAL_PORT_1} を開こうとしています...")
         ser_1 = serial.Serial(SERIAL_PORT_1, BAUD_RATE, timeout=1)
         print(f"ハイセラポンプ1-3用シリアル通信が正常に初期化されました: {SERIAL_PORT_1}")
-        
-        # ポンプ4-6用のCOMポートを初期化
+        serial_initialized_1 = True
+    except Exception as e:
+        print(f"ハイセラポンプ1-3用シリアル通信初期化エラー: {e}")
+        serial_initialized_1 = False
+
+    try:
+        # COM20の初期化
+        print(f"ポート {SERIAL_PORT_2} を開こうとしています...")
         ser_2 = serial.Serial(SERIAL_PORT_2, BAUD_RATE, timeout=1)
         print(f"ハイセラポンプ4-6用シリアル通信が正常に初期化されました: {SERIAL_PORT_2}")
-        
-        serial_initialized = True
-        return True
+        serial_initialized_2 = True
     except Exception as e:
-        print(f"ハイセラポンプ用シリアル通信初期化エラー: {e}")
-        serial_initialized = False
-        return False
+        print(f"ハイセラポンプ4-6用シリアル通信初期化エラー: {e}")
+        serial_initialized_2 = False
+
+    # 両方の初期化結果を返す
+    return serial_initialized_1 or serial_initialized_2    
 
 def initialize_syringe_serial():
     """シリアル通信を初期化（シリンジポンプ）"""
@@ -98,8 +106,11 @@ def calc_checksum(data_bytes):
 
 def send_serial_command(pump_no, action, value="000000"):
     """シリアルコマンドを送信"""
-    if not serial_initialized:
-        print("シリアル通信が初期化されていません")
+    if (pump_no < 4) and (not serial_initialized_1):
+        print("シリアル通信1が初期化されていません")
+        return False
+    if (pump_no > 3) and (not serial_initialized_2):
+        print("シリアル通信2が初期化されていません")
         return False
     
     try:
@@ -252,11 +263,11 @@ def api_status():
     """カメラ状態API"""
     return jsonify({
         'camera_initialized': camera_initialized,
-        'serial_initialized': serial_initialized,  # 後方互換（ハイセラポンプ）
-        'hysera_serial_initialized': serial_initialized,
+        'serial_initialized_1': serial_initialized_1,  # ハイセラポンプ1-3
+        'serial_initialized_2': serial_initialized_2,  # ハイセラポンプ4-6
         'syringe_serial_initialized': syringe_serial_initialized,
-        'hysera_port1_status': serial_initialized and ser_1 is not None,  # COM18（ポンプ1-3）
-        'hysera_port2_status': serial_initialized and ser_2 is not None,  # COM20（ポンプ4-6）
+        'hysera_port1_status': serial_initialized_1 and ser_1 is not None,  # COM18（ポンプ1-3）
+        'hysera_port2_status': serial_initialized_2 and ser_2 is not None,  # COM20（ポンプ4-6）
         'timestamp': time.time()
     })
 
@@ -544,9 +555,9 @@ if __name__ == '__main__':
     args = parser.parse_args()
     
     # シリアルポート設定を更新（ハイセラ／シリンジ）
-    SERIAL_PORT_1 = args.serial_port_1
-    SERIAL_PORT_2 = args.serial_port_2
-    SYRINGE_SERIAL_PORT = args.syringe_serial_port
+    # SERIAL_PORT_1 = args.serial_port_1
+    # SERIAL_PORT_2 = args.serial_port_2
+    # SYRINGE_SERIAL_PORT = args.syringe_serial_port
     
     # カメラ初期化
     camera_success = initialize_camera()
@@ -574,4 +585,4 @@ if __name__ == '__main__':
         print(f"シリアルポート {SYRINGE_SERIAL_PORT} が利用可能か確認してください。")
     
     # 開発サーバー起動（本番環境ではgunicorn等を使用）
-    app.run(host=args.host, port=args.port, debug=args.debug, threaded=True) 
+    app.run(host=args.host, port=args.port, debug=args.debug, threaded=True)
