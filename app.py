@@ -44,7 +44,7 @@ serial_initialized1 = False # ポンプ1-3用シリアル通信初期化フラ�
 serial_initialized2 = False # ポンプ4-6用シリアル通信初期化フラグ
 
 # シリアル通信設定（シリンジポンプ制御用）
-SYRINGE_SERIAL_PORT = "COM19"  # Windows環境の場合（シリンジポンプ）
+SYRINGE_SERIAL_PORT = "COM22"  # Windows環境の場合（シリンジポンプ）
 SYRINGE_BAUD_RATE = 9600
 ser_syringe = None
 syringe_serial_initialized = False
@@ -501,10 +501,10 @@ def api_syringe_pump_control():
             success, command_bytes = controller.send_command("ZR", selected_address)
             message = "初期化コマンド送信完了" if success else "初期化コマンド送信失敗"
         elif action == "move_up":
-            success, command_bytes = controller.send_command(f"D{steps}", selected_address)
+            success, command_bytes = controller.send_command(f"D{steps}R", selected_address)
             message = f"上移動コマンド送信完了（{steps}ステップ）" if success else "上移動コマンド送信失敗"
         elif action == "move_down":
-            success, command_bytes = controller.send_command(f"P{steps}", selected_address)
+            success, command_bytes = controller.send_command(f"P{steps}R", selected_address)
             message = f"下移動コマンド送信完了（{steps}ステップ）" if success else "下移動コマンド送信失敗"
         elif action == "stop":
             success, command_bytes = controller.send_command("TR", selected_address)
