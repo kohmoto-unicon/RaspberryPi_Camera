@@ -74,7 +74,7 @@ const int MICRO_STEP_1_2 = 2; // 1/2ステップ
 const int MICRO_STEP_1_4 = 4; // 1/4ステップ
 const int MICRO_STEP_1_8 = 8; // 1/8ステップ
 
-const int stepsPerRev = 200 * MICRO_STEP_1_8; // 1回転あたりのマイクロステップ数
+const int stepsPerRev = 200 * MICRO_STEP_1_2; // 1回転あたりのマイクロステップ数
 
 // ===================== RPM→Interval変換 =====================
 unsigned int rpmToIntervalUs(long rpm) {
