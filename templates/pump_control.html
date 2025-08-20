@@ -1,10 +1,10 @@
 <!DOCTYPE html>
-<html lang="ja">
+<html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>ハイセラポンプ制御</title>
-  <style>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pump Control</title>
+    <style>
     * {
       margin: 0;
       padding: 0;
@@ -324,7 +324,6 @@
               <span class="direction-label" id="dirLabel{{ pump }}">正転</span>
             </div>
           </div>
-
           <div class="control-group">
             <label>台形加速:</label>
             <div class="input-group">
@@ -458,9 +457,9 @@
     }
 
     // ポンプコマンド送信
-    async function sendPumpCommand(pump, action, value = "000000") {
+    async function sendPumpCommand(pump, action, value = "000000", microstepState = "0") {
       try {
-        const response = await fetch(`/api/pump_control?pump=${pump}&action=${action}&value=${value}`);
+        const response = await fetch(`/api/pump_control?pump=${pump}&action=${action}&value=${value}&microstep=${microstepState}`);
         const data = await response.json();
         
         // 送信コマンドの内容を表示
@@ -525,4 +524,4 @@
     });
   </script>
 </body>
-</html> 
+</html>
