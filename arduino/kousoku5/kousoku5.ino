@@ -2,6 +2,8 @@
 #include <avr/interrupt.h>
 #include <math.h>
 
+
+
 // ==== モータピン設定 ====
 const int stepPins[3] = {22, 25, 28};  // M1〜M3 STEP (PUL+)
 const int dirPins[3]  = {23, 26, 29};  // M1〜M3 DIR  (DIR+)
@@ -37,44 +39,8 @@ volatile uint8_t *stepPorts[3];
 uint8_t stepMasks[3];
 
 // ==== センサピン割り当て ====
-// 漏液センサ: デジタル16,17,18（Active LOW想定）。INPUT_PULLUPで使用。
-const int leakSensorPins[3]    = {16, 17, 18};
-// 電流センサ（脱調チェック用）: A0, A1, A2
-const int currentSensorPins[3] = {A0, A1, A2};
-
-// ==== 電流検知機能 ====
-const int CURRENT_BUFFER_SIZE = 50;  // 電流データ格納数
-const int CURRENT_SAMPLE_INTERVAL_MS = 2;  // サンプリング間隔 [ms]
-const int CURRENT_AVERAGE_INTERVAL_MS = 100;  // 平均値計算間隔 [ms] (0.1秒)
-
-// 電流データバッファ（各モータ用）
-volatile int currentBuffer[3][CURRENT_BUFFER_SIZE];  // mA単位の整数型
-volatile int currentBufferIndex[3] = {0, 0, 0};
-volatile bool currentBufferFull[3] = {false, false, false};
-
-// 電流検知タイマー
-volatile unsigned long lastCurrentSampleTime[3] = {0, 0, 0};
-volatile unsigned long lastCurrentAverageTime[3] = {0, 0, 0};
-
-// 事前計算された電流平均値（各モータ用）
-volatile int preCalculatedAverage[3] = {0, 0, 0};
-
-// 電流検知パラメータ
-const float CURRENT_SENSOR_VOLTAGE_OFFSET = 2.5f;  // 電流0A時の電圧 [V]
-const float CURRENT_SENSOR_SENSITIVITY = 0.185f;   // 感度 [V/A] (185mV/A)
-const float ADC_REFERENCE_VOLTAGE = 5.0f;         // ADC基準電圧 [V]
-const int ADC_RESOLUTION = 1024;                  // ADC分解能 (10bit)
-
-// ==== コマンドバッファ ====
-byte commandBuffer[11];
-int commandIndex = 0;
-
-// ==== マイクロステップ設定 ====
-const int MICRO_STEP_1_2 = 2; // 1/2ステップ
-const int MICRO_STEP_1_4 = 4; // 1/4ステップ
-const int MICRO_STEP_1_8 = 8; // 1/8ステップ
-
-const int stepsPerRev = 200 * MICRO_STEP_1_2; // 1回転あたりのマイクロステップ数
+// 漏液センサ: デジタル34,35,36（Active LOW想定）。INPUT_PULLUPで使用。
+const int leakSensorPins[3]    = {34, 35, 36};
 
 // ===================== RPM→Interval変換 =====================
 unsigned int rpmToIntervalUs(long rpm) {
@@ -100,103 +66,8 @@ inline bool isLeakDetected(int idx) {
   return digitalRead(leakSensorPins[idx]) == LOW;
 }
 
-inline int readCurrentRaw(int idx) {
-  // 0..1023 (5V基準) の生ADC値
-  return analogRead(currentSensorPins[idx]);
-}
-
-// 電流値を計算（ADC値から電流値[mA]に変換）
-inline int calculateCurrent(int adcValue) {
-  // ADC値を電圧に変換
-  float voltage = (float)adcValue * ADC_REFERENCE_VOLTAGE / (float)ADC_RESOLUTION;
-  
-  // 電流値を計算（オフセット電圧を引いて感度で割る）
-  float currentA = (voltage - CURRENT_SENSOR_VOLTAGE_OFFSET) / CURRENT_SENSOR_SENSITIVITY;
-  
-  // mA単位の整数に変換
-  int currentMA = (int)(currentA * 1000.0f + 0.5f);
-  
-  return currentMA;
-}
-
-// 電流サンプリング処理
-inline void sampleCurrent(int idx) {
-  unsigned long currentTime = millis();
-  
-  // サンプリング間隔チェック
-  if (currentTime - lastCurrentSampleTime[idx] >= CURRENT_SAMPLE_INTERVAL_MS) {
-    // ADC値を読み取り
-    int adcValue = readCurrentRaw(idx);
-    
-    // 電流値に変換（mA単位の整数）
-    int current = calculateCurrent(adcValue);
-    
-    // バッファに格納
-    currentBuffer[idx][currentBufferIndex[idx]] = current;
-    
-    // インデックスを更新
-    currentBufferIndex[idx]++;
-    if (currentBufferIndex[idx] >= CURRENT_BUFFER_SIZE) {
-      currentBufferIndex[idx] = 0;
-      currentBufferFull[idx] = true;
-    }
-    
-    // 最後のサンプリング時間を更新
-    lastCurrentSampleTime[idx] = currentTime;
-  }
-  
-  // 0.1秒ごとに平均値を計算
-  if (currentTime - lastCurrentAverageTime[idx] >= CURRENT_AVERAGE_INTERVAL_MS) {
-    preCalculatedAverage[idx] = getCurrentAverage(idx);
-    lastCurrentAverageTime[idx] = currentTime;
-  }
-}
-
-// 電流データの統計情報を取得
-inline int getCurrentAverage(int idx) {
-  int count = currentBufferFull[idx] ? CURRENT_BUFFER_SIZE : currentBufferIndex[idx];
-  if (count == 0) return 0;
-  
-  long sum = 0;
-  for (int i = 0; i < count; i++) {
-    sum += currentBuffer[idx][i];
-  }
-  return (int)(sum / count);
-}
-
-// 電流データの最大値を取得
-inline int getCurrentMax(int idx) {
-  int count = currentBufferFull[idx] ? CURRENT_BUFFER_SIZE : currentBufferIndex[idx];
-  if (count == 0) return 0;
-  
-  int maxCurrent = currentBuffer[idx][0];
-  for (int i = 1; i < count; i++) {
-    if (currentBuffer[idx][i] > maxCurrent) {
-      maxCurrent = currentBuffer[idx][i];
-    }
-  }
-  return maxCurrent;
-}
-
-// 電流データの最小値を取得
-inline int getCurrentMin(int idx) {
-  int count = currentBufferFull[idx] ? CURRENT_BUFFER_SIZE : currentBufferIndex[idx];
-  if (count == 0) return 0;
-  
-  int minCurrent = currentBuffer[idx][0];
-  for (int i = 1; i < count; i++) {
-    if (currentBuffer[idx][i] < minCurrent) {
-      minCurrent = currentBuffer[idx][i];
-    }
-  }
-  return minCurrent;
-}
-
 // ===================== ステップトグル関数 =====================
 inline void handleStep(int idx) {
-  // 電流サンプリング（モータ動作中でなくても実行）
-  sampleCurrent(idx);
-  
   if (!motorEnabled[idx]) return;
   stepHigh[idx] = !stepHigh[idx];
 
@@ -483,26 +354,16 @@ void processCommand(byte* cmd) {
       planActive[idx] = false;
       planStepsDone[idx] = 0;
     }
-  } else if (action == 'C') {  // 電流データ取得
-    // 電流データの平均値を取得
-    int avgCurrent = preCalculatedAverage[idx];
-    
+  } else if (action == 'C') {  // 電流データ取得（ダミー応答）
     // STX + ポンプNo + 電流値(符号+5桁整数) + ETX + CS の形式で送信
     char response[11];
     response[0] = 0x02;  // STX
     response[1] = pumpNo + '0';  // ポンプ番号
     
-    // 電流値を符号+5桁整数の文字列に変換
-    char currentStr[7];
-    if (avgCurrent >= 0) {
-      sprintf(currentStr, "+%05d", avgCurrent);
-    } else {
-      sprintf(currentStr, "%06d", avgCurrent);  // 負の場合は-記号含めて6桁
-    }
-    
-    // 電流値文字列をコピー
+    // ダミーの電流値 "+00000" を設定
+    const char* dummyCurrent = "+00000";
     for (int i = 0; i < 6; i++) {
-      response[2 + i] = currentStr[i];
+      response[2 + i] = dummyCurrent[i];
     }
     
     // チェックサム計算
@@ -538,25 +399,10 @@ void setup() {
     targetSpeedSps[i] = rpmToSps(200);
   }
 
-  // センサピン設定
+  // 漏液センサピン設定
   for (int i = 0; i < 3; i++) {
     pinMode(leakSensorPins[i], INPUT_PULLUP);
-    
-    // 電流バッファ初期化
-    currentBufferIndex[i] = 0;
-    currentBufferFull[i] = false;
-    lastCurrentSampleTime[i] = 0;
-    lastCurrentAverageTime[i] = 0; // 平均値計算タイマーの初期化
-    
-    // 電流バッファを0で初期化
-    for (int j = 0; j < CURRENT_BUFFER_SIZE; j++) {
-      currentBuffer[i][j] = 0;
-    }
-    
-    // 事前計算された平均値を初期化
-    preCalculatedAverage[i] = 0;
   }
-  // ADC設定はデフォルトのまま（A0〜A2を使用）。必要であれば分解能/基準電圧を変更可。
 
   setupTimer3(stepInterval[0]); // M1
   setupTimer4(stepInterval[1]); // M2
