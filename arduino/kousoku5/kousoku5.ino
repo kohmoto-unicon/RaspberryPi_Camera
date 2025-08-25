@@ -2,12 +2,38 @@
 #include <avr/interrupt.h>
 #include <math.h>
 
+// デバッグLEDピン設定
+const int debugLedPin = 52;
 
+// 外部割り込みピン設定
+const int extInterruptPins[3] = {18, 19, 20}; // INT3, INT2, INT1
+
+// ==== タイマー1による1ms処理用 ====
+volatile unsigned long msCounter = 0; // ミリ秒カウンター
+// 1秒カウンター（1000ミリ秒ごとにインクリメント）
+volatile unsigned long oneSecondCounter = 0; 
+
+// 外部割り込みカウンター
+volatile unsigned long extInterruptCounter[3] = {0, 0, 0};
+
+// 外部割り込みの時間計測用変数
+volatile unsigned long lastInterruptTimeMs[3] = {0, 0, 0}; // 前回の割り込み時間[ms]
+volatile unsigned long rotationTimeMs[3] = {0, 0, 0};      // 1回転にかかった時間[ms]
 
 // ==== モータピン設定 ====
 const int stepPins[3] = {22, 25, 28};  // M1〜M3 STEP (PUL+)
 const int dirPins[3]  = {23, 26, 29};  // M1〜M3 DIR  (DIR+)
 const int enaPins[3]  = {24, 27, 30};  // M1〜M3 ENA  (ENA+)
+
+// ==== 基本モータ設定 ====
+const int MICRO_STEP_1_2 = 2; // 1/2ステップ
+const int MICRO_STEP_1_4 = 4; // 1/4ステップ
+const int MICRO_STEP_1_8 = 8; // 1/8ステップ
+const int stepsPerRev = 200 * MICRO_STEP_1_2; // 1回転あたりのマイクロステップ数
+
+// ==== シリアル通信用バッファ ====
+byte commandBuffer[11]; // コマンドバッファ
+int commandIndex = 0;   // バッファのインデックス
 
 volatile bool stepHigh[3] = {false, false, false};
 volatile unsigned int stepInterval[3] = {0, 0, 0}; // µs (初期値は後で設定)
@@ -41,6 +67,15 @@ uint8_t stepMasks[3];
 // ==== センサピン割り当て ====
 // 漏液センサ: デジタル34,35,36（Active LOW想定）。INPUT_PULLUPで使用。
 const int leakSensorPins[3]    = {34, 35, 36};
+
+// ===================== デバッグLED制御関数 =====================
+inline void setDebugLED(bool on) {
+  digitalWrite(debugLedPin, on ? HIGH : LOW);
+}
+
+inline void toggleDebugLED() {
+  digitalWrite(debugLedPin, !digitalRead(debugLedPin));
+}
 
 // ===================== RPM→Interval変換 =====================
 unsigned int rpmToIntervalUs(long rpm) {
@@ -173,12 +208,113 @@ inline void handleStep(int idx) {
   }
 }
 
+// ===================== 外部割り込み処理 =====================
+// 外部割り込み1 (ポート20) のハンドラ
+ISR(INT1_vect) {
+  extInterruptCounter[2]++;  // 外部割り込みカウンタを増加
+  
+  // 1回転にかかった時間を計測
+  unsigned long currentTimeMs = msCounter;
+  if (lastInterruptTimeMs[2] > 0) {
+    // 前回の割り込みからの経過時間を計算（時間の保存のみ）
+    rotationTimeMs[2] = currentTimeMs - lastInterruptTimeMs[2];
+  }
+  lastInterruptTimeMs[2] = currentTimeMs;
+}
+
+// 外部割り込み2 (ポート19) のハンドラ
+ISR(INT2_vect) {
+  extInterruptCounter[1]++;  // 外部割り込みカウンタを増加
+  
+  // 1回転にかかった時間を計測
+  unsigned long currentTimeMs = msCounter;
+  if (lastInterruptTimeMs[1] > 0) {
+    // 前回の割り込みからの経過時間を計算（時間の保存のみ）
+    rotationTimeMs[1] = currentTimeMs - lastInterruptTimeMs[1];
+  }
+  lastInterruptTimeMs[1] = currentTimeMs;
+}
+
+// 外部割り込み3 (ポート18) のハンドラ
+ISR(INT3_vect) {
+  extInterruptCounter[0]++;  // 外部割り込みカウンタを増加
+  
+  // 1回転にかかった時間を計測
+  unsigned long currentTimeMs = msCounter;
+  if (lastInterruptTimeMs[0] > 0) {
+    // 前回の割り込みからの経過時間を計算（時間の保存のみ）
+    rotationTimeMs[0] = currentTimeMs - lastInterruptTimeMs[0];
+  }
+  lastInterruptTimeMs[0] = currentTimeMs;
+  
+  // デバッグLEDをトグル (INT3のみLED連動)
+  toggleDebugLED();
+}
+
+// RPM計算用の関数（整数型に変更）
+int calculateRPM(int idx) {
+  if (idx < 0 || idx >= 3) return 0;
+  
+  if (rotationTimeMs[idx] > 0) {
+    // 60000ms / 回転時間[ms] = 回転数/分
+    return 60000 / rotationTimeMs[idx];
+  } else {
+    return 0; // 回転時間が0または未測定の場合は0を返す
+  }
+}
+
 // ===================== ISR =====================
 ISR(TIMER3_COMPA_vect) { handleStep(0); } // M1
 ISR(TIMER4_COMPA_vect) { handleStep(1); } // M2
 ISR(TIMER5_COMPA_vect) { handleStep(2); } // M3
 
+// 1msごとの割り込み処理
+ISR(TIMER1_COMPA_vect) {
+  msCounter++; // ミリ秒カウンターをインクリメント
+  
+  // 1秒カウンターの更新（1000msごと）
+  if (msCounter % 1000 == 0) {
+    oneSecondCounter++;
+    
+    // 5秒ごとに回転情報をシリアル出力（デバッグ用）
+    if (oneSecondCounter % 5 == 0) {
+      for (int i = 0; i < 3; i++) {
+        int rpm = calculateRPM(i);
+        Serial.print("Sensor");
+        Serial.print(i+1);
+        Serial.print(": Rot=");
+        Serial.print(rotationTimeMs[i]);
+        Serial.print("ms, RPM=");
+        Serial.print(rpm);
+        Serial.print("  ");
+      }
+      Serial.println();
+    }
+  }
+
+  // 漏液センサ動作チェック（20msごとに実行）
+  if (msCounter % 20 == 0) {
+    setDebugLED(isLeakDetected(0));
+  }
+}
+
 // ===================== タイマー設定関数 =====================
+// タイマー1を1ms間隔で設定する関数
+void setupTimer1ForMillisecond() {
+  noInterrupts();
+  TCCR1A = 0;
+  TCCR1B = 0;
+  TCNT1 = 0;
+  
+  // 1ms間隔の設定 (16MHz / 8 / 2000 = 1kHz = 1ms)
+  OCR1A = 1999; // 0から数えるので2000-1
+  
+  TCCR1B |= (1 << WGM12);  // CTCモード
+  TCCR1B |= (1 << CS11);   // 8分周
+  TIMSK1 |= (1 << OCIE1A); // 比較一致割り込み有効化
+  interrupts();
+}
+
 void setupTimer3(unsigned int interval_us) {
   noInterrupts();
   TCCR3A = 0; TCCR3B = 0; TCNT3 = 0;
@@ -206,6 +342,34 @@ void setupTimer5(unsigned int interval_us) {
   TCCR5B |= (1 << WGM52);
   TCCR5B |= (1 << CS50);
   TIMSK5 |= (1 << OCIE5A);
+  interrupts();
+}
+
+// 外部割り込みの設定
+void setupExternalInterrupts() {
+  noInterrupts();
+  
+  // INT1, INT2, INT3 (ポート20, 19, 18) の設定
+  for (int i = 0; i < 3; i++) {
+    pinMode(extInterruptPins[i], INPUT_PULLUP);
+  }
+  
+  // 立ち下がりエッジで割り込み
+  // INT1 (ポート20)
+  EICRA |= (1 << ISC11);    // 1
+  EICRA &= ~(1 << ISC10);   // 0 -> 10: 立ち下がりエッジで割り込み
+  
+  // INT2 (ポート19)
+  EICRA |= (1 << ISC21);    // 1
+  EICRA &= ~(1 << ISC20);   // 0 -> 10: 立ち下がりエッジで割り込み
+  
+  // INT3 (ポート18)
+  EICRA |= (1 << ISC31);    // 1
+  EICRA &= ~(1 << ISC30);   // 0 -> 10: 立ち下がりエッジで割り込み
+  
+  // 割り込み有効化
+  EIMSK |= (1 << INT1) | (1 << INT2) | (1 << INT3);
+  
   interrupts();
 }
 
@@ -377,6 +541,33 @@ void processCommand(byte* cmd) {
     
     // 応答を送信
     Serial.write(response, 10);
+  } else if (action == 'R') {  // 回転情報取得
+    // STX + ポンプNo + RPM(6桁整数) + ETX + CS の形式で送信
+    char response[11];
+    response[0] = 0x02;  // STX
+    response[1] = pumpNo + '0';  // ポンプ番号
+    
+    // RPMを6桁で整形
+    int rpm = calculateRPM(pumpNo - 1); // ポンプ番号に対応するセンサーのRPMを計算
+    char rpmStr[7];
+    sprintf(rpmStr, "%06d", rpm); // 6桁固定で左側を0埋め
+    
+    // RPMデータをコピー
+    for (int i = 0; i < 6; i++) {
+      response[2 + i] = rpmStr[i];
+    }
+    
+    // チェックサム計算
+    byte checksum = 0;
+    for (int i = 1; i <= 7; i++) {
+      checksum ^= response[i];
+    }
+    response[8] = checksum;
+    
+    response[9] = 0x03;  // ETX
+    
+    // 応答を送信
+    Serial.write(response, 10);
   }
 }
 
@@ -404,6 +595,22 @@ void setup() {
     pinMode(leakSensorPins[i], INPUT_PULLUP);
   }
 
+  // デバッグLEDピン設定
+  pinMode(debugLedPin, OUTPUT);
+  digitalWrite(debugLedPin, LOW); // 初期状態はOFF
+
+  // 外部割り込み時間計測の初期化
+  for (int i = 0; i < 3; i++) {
+    lastInterruptTimeMs[i] = 0;
+    rotationTimeMs[i] = 0;
+  }
+  
+  // 外部割り込みの設定
+  setupExternalInterrupts();
+  
+  // 1msタイマーの設定
+  setupTimer1ForMillisecond();
+
   setupTimer3(stepInterval[0]); // M1
   setupTimer4(stepInterval[1]); // M2
   setupTimer5(stepInterval[2]); // M3
@@ -413,6 +620,7 @@ void setup() {
 
 // ===================== LOOP =====================
 void loop() {
+
   if (Serial.available()) {
     byte b = Serial.read();
     if (commandIndex == 0 && b != 0x02) return;
