@@ -4,9 +4,23 @@
 
 // デバッグLEDピン設定
 const int debugLedPin = 52;
+volatile unsigned int intCounter1 = 0; // 割込みカウンター
 
 // 外部割り込みピン設定
 const int extInterruptPins[3] = {18, 19, 20}; // INT3, INT2, INT1
+
+// ==== HD44780 LCD制御用ピン設定（4bitモード） ====
+const int lcdRS = 2;    // RS (Register Select)
+const int lcdE  = 3;    // E  (Enable)
+const int lcdD4 = 4;    // D4 (Data bit 4)
+const int lcdD5 = 5;    // D5 (Data bit 5
+const int lcdD6 = 6;    // D6 (Data bit 6)
+const int lcdD7 = 7;    // D7 (Data bit 7)
+// RWはGNDに接続（ソフト制御なし）
+
+// LCD表示用バッファ
+char lcdLine1[17];  // 1行目（16文字 + 終端）
+char lcdLine2[17];  // 2行目（16文字 + 終端）
 
 // ==== タイマー1による1ms処理用 ====
 volatile unsigned long msCounter = 0; // ミリ秒カウンター
@@ -75,6 +89,195 @@ inline void setDebugLED(bool on) {
 
 inline void toggleDebugLED() {
   digitalWrite(debugLedPin, !digitalRead(debugLedPin));
+}
+
+// ===================== HD44780 LCD制御関数 =====================
+// 4bitデータをLCDに送信
+void lcdWrite4Bits(byte data) {
+  digitalWrite(lcdD4, (data >> 0) & 0x01);
+  digitalWrite(lcdD5, (data >> 1) & 0x01);
+  digitalWrite(lcdD6, (data >> 2) & 0x01);
+  digitalWrite(lcdD7, (data >> 3) & 0x01);
+  
+  // Enableパルス
+  digitalWrite(lcdE, HIGH);
+  delayMicroseconds(1);
+  digitalWrite(lcdE, LOW);
+  delayMicroseconds(100);
+}
+
+// LCDにコマンドを送信
+void lcdCommand(byte command) {
+  digitalWrite(lcdRS, LOW);
+  
+  // 上位4bit
+  lcdWrite4Bits(command >> 4);
+  // 下位4bit
+  lcdWrite4Bits(command & 0x0F);
+  
+  // コマンド実行待ち
+  if (command == 0x01 || command == 0x02) {
+    delay(2);
+  } else {
+    delayMicroseconds(100);
+  }
+}
+
+// LCDにデータを送信
+void lcdWrite(byte data) {
+  digitalWrite(lcdRS, HIGH);
+  
+  // 上位4bit
+  lcdWrite4Bits(data >> 4);
+  // 下位4bit
+  lcdWrite4Bits(data & 0x0F);
+  
+  delayMicroseconds(100);
+}
+
+// LCD初期化
+void lcdInit() {
+  // ピンモード設定
+  pinMode(lcdRS, OUTPUT);
+  pinMode(lcdE, OUTPUT);
+  pinMode(lcdD4, OUTPUT);
+  pinMode(lcdD5, OUTPUT);
+  pinMode(lcdD6, OUTPUT);
+  pinMode(lcdD7, OUTPUT);
+  
+  // 初期化待ち時間
+  delay(50);
+  
+  // 4bitモード初期化シーケンス
+  digitalWrite(lcdRS, LOW);
+  digitalWrite(lcdE, LOW);
+  
+  // 3回の0x03送信（8bitモード設定）
+  lcdWrite4Bits(0x03);
+  delay(5);
+  lcdWrite4Bits(0x03);
+  delay(5);
+  lcdWrite4Bits(0x03);
+  delayMicroseconds(150);
+  
+  // 4bitモード設定
+  lcdWrite4Bits(0x02);
+  
+  // 4bitモード、2行表示、5x8ドット
+  lcdCommand(0x28);
+  
+  // 表示ON、カーソルOFF、ブリンクOFF
+  lcdCommand(0x0C);
+  
+  // 画面クリア
+  lcdCommand(0x01);
+  delay(2);
+  
+  // エントリーモード設定（左シフト、インクリメント）
+  lcdCommand(0x06);
+  
+  // 初期メッセージ表示
+  lcdSetCursor(0, 0);
+  lcdPrint("RaspberryPi");
+  lcdSetCursor(0, 1);
+  lcdPrint("Camera System");
+}
+
+// カーソル位置設定
+void lcdSetCursor(byte col, byte row) {
+  byte address = (row == 0) ? 0x00 : 0x40;
+  address += col;
+  lcdCommand(0x80 | address);
+}
+
+// 画面クリア
+void lcdClear() {
+  lcdCommand(0x01);
+  delay(2);
+}
+
+// 文字列表示
+void lcdPrint(const char* str) {
+  while (*str) {
+    lcdWrite(*str++);
+  }
+}
+
+// 数値表示
+void lcdPrint(int num) {
+  char buf[16];
+  sprintf(buf, "%d", num);
+  lcdPrint(buf);
+}
+
+// 浮動小数点表示
+void lcdPrint(float num, int decimals) {
+  char buf[16];
+  dtostrf(num, 0, decimals, buf);
+  lcdPrint(buf);
+}
+
+// LCD表示更新（システム状態表示）
+void lcdUpdateDisplay() {
+  static unsigned long lastUpdate = 0;
+  unsigned long currentTime = millis();
+  
+  // 500msごとに更新
+  if (currentTime - lastUpdate < 500) return;
+  lastUpdate = currentTime;
+  
+  // 1行目：システム状態とモータ情報
+  lcdSetCursor(0, 0);
+  int activeMotors = 0;
+  for (int i = 0; i < 3; i++) {
+    if (motorEnabled[i]) activeMotors++;
+  }
+  sprintf(lcdLine1, "M:%d/3 %s", activeMotors, 
+    (motorEnabled[0] || motorEnabled[1] || motorEnabled[2]) ? "RUN" : "STOP");
+  lcdPrint(lcdLine1);
+  
+  // 2行目：モータ速度とRPM情報
+  lcdSetCursor(0, 1);
+  if (activeMotors > 0) {
+    // 動作中のモータの速度とRPMを表示
+    for (int i = 0; i < 3; i++) {
+      if (motorEnabled[i]) {
+        int rpm = calculateRPM(i);
+        sprintf(lcdLine2, "M%d:%drpm", i+1, rpm);
+        lcdPrint(lcdLine2);
+        break; // 最初の動作中モータのみ表示
+      }
+    }
+  } else {
+    // 停止中の場合
+    sprintf(lcdLine2, "System Ready");
+    lcdPrint(lcdLine2);
+  }
+}
+
+// 詳細情報表示（コマンド受信時などに使用）
+void lcdShowDetailedInfo() {
+  // 1行目：モータ状態
+  lcdSetCursor(0, 0);
+  sprintf(lcdLine1, "M1:%s M2:%s M3:%s",
+    motorEnabled[0] ? "ON" : "OFF",
+    motorEnabled[1] ? "ON" : "OFF",
+    motorEnabled[2] ? "ON" : "OFF");
+  lcdPrint(lcdLine1);
+  
+  // 2行目：RPM情報
+  lcdSetCursor(0, 1);
+  sprintf(lcdLine2, "RPM:%d,%d,%d",
+    calculateRPM(0), calculateRPM(1), calculateRPM(2));
+  lcdPrint(lcdLine2);
+}
+
+// エラーメッセージ表示
+void lcdShowError(const char* errorMsg) {
+  lcdSetCursor(0, 0);
+  lcdPrint("ERROR:");
+  lcdSetCursor(0, 1);
+  lcdPrint(errorMsg);
 }
 
 // ===================== RPM→Interval変換 =====================
@@ -238,7 +441,7 @@ ISR(INT2_vect) {
 // 外部割り込み3 (ポート18) のハンドラ
 ISR(INT3_vect) {
   extInterruptCounter[0]++;  // 外部割り込みカウンタを増加
-  
+  intCounter1++;
   // 1回転にかかった時間を計測
   unsigned long currentTimeMs = msCounter;
   if (lastInterruptTimeMs[0] > 0) {
@@ -277,17 +480,19 @@ ISR(TIMER1_COMPA_vect) {
     oneSecondCounter++;
     
     // 5秒ごとに回転情報をシリアル出力（デバッグ用）
-    if (oneSecondCounter % 5 == 0) {
-      for (int i = 0; i < 3; i++) {
-        int rpm = calculateRPM(i);
-        Serial.print("Sensor");
-        Serial.print(i+1);
-        Serial.print(": Rot=");
-        Serial.print(rotationTimeMs[i]);
-        Serial.print("ms, RPM=");
-        Serial.print(rpm);
-        Serial.print("  ");
-      }
+    if (oneSecondCounter % 5 == 0) 
+    {
+  //    for (int i = 0; i < 3; i++) {
+  //      int rpm = calculateRPM(i);
+  //      Serial.print("Sensor");
+  //      Serial.print(i+1);
+  //      Serial.print(": Rot=");
+  //      Serial.print(rotationTimeMs[i]);
+  //      Serial.print("ms, RPM=");
+  //      Serial.print(rpm);
+  //      Serial.print("  ");
+  //
+      Serial.print(calculateRPM(0));
       Serial.println();
     }
   }
@@ -541,7 +746,10 @@ void processCommand(byte* cmd) {
     
     // 応答を送信
     Serial.write(response, 10);
-  } else if (action == 'R') {  // 回転情報取得
+    
+    // LCDに詳細情報を表示
+    lcdShowDetailedInfo();
+  } else if (action == 'X') {  // 回転情報取得
     // STX + ポンプNo + RPM(6桁整数) + ETX + CS の形式で送信
     char response[11];
     response[0] = 0x02;  // STX
@@ -568,6 +776,9 @@ void processCommand(byte* cmd) {
     
     // 応答を送信
     Serial.write(response, 10);
+    
+    // LCDに詳細情報を表示
+    lcdShowDetailedInfo();
   }
 }
 
@@ -615,6 +826,9 @@ void setup() {
   setupTimer4(stepInterval[1]); // M2
   setupTimer5(stepInterval[2]); // M3
 
+  // LCD初期化
+  lcdInit();
+
   Serial.begin(9600);
 }
 
@@ -630,4 +844,7 @@ void loop() {
       commandIndex = 0;
     }
   }
+  
+  // LCD表示更新
+  lcdUpdateDisplay();
 }

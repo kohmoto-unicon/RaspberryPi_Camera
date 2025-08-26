@@ -343,10 +343,10 @@
           </div>
 
           <div class="control-group">
-            <label>未使用:</label>
+            <label>回転数:</label>
             <div class="input-group">
-              <span id="currentValue{{ pump }}" class="current-display">0 mA</span>
-              <button class="btn btn-info" onclick="getCurrent({{ pump }})">取得</button>
+              <span id="rpmValue{{ pump }}" class="current-display">0 rpm</span>
+              <button class="btn btn-info" onclick="getRPM({{ pump }})">取得</button>
             </div>
           </div>
 
@@ -426,13 +426,13 @@
       sendPumpCommand(pump, 'S');
     }
 
-    // 電流値取得
-    async function getCurrent(pump){
+    // RPM取得
+    async function getRPM(pump){
       try {
-        const response = await fetch(`/api/get_current?pump=${pump}`);
+        const response = await fetch(`/api/get_rpm?pump=${pump}`);
         const data = await response.json();
         
-        const currentDisplay = document.getElementById('currentValue' + pump);
+        const rpmDisplay = document.getElementById('rpmValue' + pump);
         
         // 送信コマンドの内容を表示
         if (data.command_bytes && data.command_bytes.length > 0) {
@@ -444,15 +444,15 @@
         }
         
         if (data.success) {
-          currentDisplay.textContent = data.current + ' mA';
+          rpmDisplay.textContent = data.rpm + ' rpm';
           console.log(data.message);
         } else {
-          currentDisplay.textContent = '0 mA';
-          console.error('電流値取得失敗:', data.message);
+          rpmDisplay.textContent = '0 rpm';
+          console.error('回転数取得失敗:', data.message);
         }
       } catch (error) {
         console.error('通信エラー:', error);
-        document.getElementById('currentValue' + pump).textContent = '0 mA';
+        document.getElementById('rpmValue' + pump).textContent = '0 rpm';
       }
     }
 

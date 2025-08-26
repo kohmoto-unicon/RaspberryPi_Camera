@@ -469,6 +469,117 @@ def api_get_current():
         'command_bytes': list(cmd)  # 送信コマンドの内容を追加
     })
 
+@app.route("/api/get_rpm")
+def api_get_rpm():
+    """回転数取得API"""
+    pump = request.args.get("pump", "1")
+    
+    try:
+        pump = int(pump)
+    except ValueError:
+        return jsonify({
+            'success': False,
+            'rpm': 0,
+            'message': f'無効なポンプ番号: {pump}',
+            'command_bytes': []
+        })
+    
+    # 回転数データ取得コマンドを生成（送信前に）
+    value_str = "000000"
+    cmd = bytearray(11)
+    cmd[0] = 0x02
+    
+    # ポンプ番号に応じてコマンド番号を変換
+    if 1 <= pump <= 3:
+        command_pump_no = pump  # そのまま
+    elif 4 <= pump <= 6:
+        command_pump_no = pump - 3  # 4→1, 5→2, 6→3
+    else:
+        return jsonify({
+            'success': False,
+            'rpm': 0,
+            'message': f'無効なポンプ番号: {pump}',
+            'command_bytes': list(cmd)
+        })
+    
+    cmd[1] = ord(str(command_pump_no))  # 変換されたコマンド番号を使用
+    cmd[2] = ord("X")  # 回転数取得コマンド
+    for i, c in enumerate(value_str):
+        cmd[3 + i] = ord(c)
+    cmd[9] = calc_checksum(cmd)
+    cmd[10] = 0x03
+    
+    # 回転数データ取得コマンドを送信
+    success = send_serial_command(pump, "X", "000000")
+    
+    if not success:
+        return jsonify({
+            'success': False,
+            'rpm': 0,
+            'message': '送信失敗',
+            'command_bytes': list(cmd)  # 送信コマンドの内容を追加
+        })
+    
+    # 応答を待機（最大1秒）
+    import time
+    start_time = time.time()
+    response = None
+    
+    # ポンプ番号に応じて適切なシリアルポートを選択
+    if 1 <= pump <= 3:
+        target_ser = ser_1
+        port_name = f"COM1-3({SERIAL_PORT_1})"
+    elif 4 <= pump <= 6:
+        target_ser = ser_2
+        port_name = f"COM4-6({SERIAL_PORT_2})"
+    else:
+        return jsonify({
+            'success': False,
+            'rpm': 0,
+            'message': f'無効なポンプ番号: {pump}',
+            'command_bytes': list(cmd)
+        })
+    
+    while time.time() - start_time < 1.0:
+        if target_ser.in_waiting >= 10:  # 10バイトの応答を待機
+            response = target_ser.read(10)
+            break
+        time.sleep(0.01)
+    
+    if response and len(response) == 10:
+        # 応答フォーマット: STX + ポンプNo + RPM(6桁整数) + CS + ETX
+        if response[0] == 0x02 and response[9] == 0x03:
+            # チェックサム検証
+            checksum = 0
+            for i in range(1, 8):
+                checksum ^= response[i]
+            
+            if checksum == response[8]:
+                # 回転数を解析
+                rpm_str = response[2:8].decode('ascii')
+                try:
+                    rpm = int(rpm_str)
+                    return jsonify({
+                        'success': True,
+                        'rpm': rpm,
+                        'message': f'回転数取得完了: {rpm}rpm',
+                        'command_bytes': list(cmd)  # 送信コマンドの内容を追加
+                    })
+                except ValueError:
+                    return jsonify({
+                        'success': False,
+                        'rpm': 0,
+                        'message': '回転数解析エラー',
+                        'command_bytes': list(cmd)  # 送信コマンドの内容を追加
+                    })
+    
+    return jsonify({
+        'success': False,
+        'rpm': 0,
+        'message': '応答タイムアウトまたはエラー',
+        'command_bytes': list(cmd)  # 送信コマンドの内容を追加
+    })
+
 @app.route("/api/syringe_pump_control")
 def api_syringe_pump_control():
     """シリンジポンプ制御API"""
