@@ -222,6 +222,8 @@ void lcdUpdateDisplay() {
   static unsigned long lastUpdate = 0;
   unsigned long currentTime = millis();
   
+  lcdPrint("TEST");
+  /*
   // 500msごとに更新
   if (currentTime - lastUpdate < 500) return;
   lastUpdate = currentTime;
@@ -253,6 +255,7 @@ void lcdUpdateDisplay() {
     sprintf(lcdLine2, "System Ready");
     lcdPrint(lcdLine2);
   }
+  */
 }
 
 // 詳細情報表示（コマンド受信時などに使用）

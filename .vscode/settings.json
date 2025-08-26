@@ -10,7 +10,8 @@
       ]
     }
   },
-  "terminal.integrated.defaultProfile.windows": "CMD (venv)"
+  "terminal.integrated.defaultProfile.windows": "CMD (venv)",
+  "editor.fontSize": 18
 }
 
     
