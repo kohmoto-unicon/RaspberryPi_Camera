@@ -690,17 +690,17 @@ void processCommand(byte* cmd) {
     planStepsDone[idx] = 0;
     // LCD表示
     lcdClear();
-    lcdPrint("Stop");
+    lcdPrint("Receive Stop");
   } else if (action == 'F') {  // 正転
     digitalWrite(dirPins[idx], HIGH);
     // LCD表示
     lcdClear();
-    lcdPrint("Forward");
+    lcdPrint("Receive Forward");
   } else if (action == 'R') {  // 逆転
     digitalWrite(dirPins[idx], LOW);
     // LCD表示
     lcdClear();
-    lcdPrint("Reverse");
+    lcdPrint("Receive Reverse");
   } else if (action == 'V') {  // 速度変更 (rpm)
     if (value > 0) {
       if (useTrapezoid[idx]) {
@@ -721,18 +721,18 @@ void processCommand(byte* cmd) {
       }
       // LCD表示
       lcdClear();
-      lcdPrint("Speed");
+      lcdPrint("Receive Speed");
     }
   } else if (action == 'E') {  // Enable ON
     digitalWrite(enaPins[idx], LOW);
     // LCD表示
     lcdClear();
-    lcdPrint("Enable ON");
+    lcdPrint("Receive EnableON");
   } else if (action == 'D') {  // Enable OFF
     digitalWrite(enaPins[idx], HIGH);
     // LCD表示
     lcdClear();
-    lcdPrint("Enable OFF");
+    lcdPrint("ReceiveEnableOFF");
   } else if (action == 'A') {  // 台形加減速のON/OFF（0:OFF, それ以外:ON）
     useTrapezoid[idx] = (value != 0);
     // OFFにしたら当該モータのみ等速設定へ即時反映
