@@ -222,7 +222,7 @@ void lcdUpdateDisplay() {
   static unsigned long lastUpdate = 0;
   unsigned long currentTime = millis();
   
-  lcdPrint("TEST");
+  //lcdPrint("TEST");
   /*
   // 500msごとに更新
   if (currentTime - lastUpdate < 500) return;
@@ -668,6 +668,9 @@ void processCommand(byte* cmd) {
         planActive[idx] = false;
         planStepsDone[idx] = 0;
       }
+     // LCD表示
+      lcdClear();
+      lcdPrint("Start");
     } else {
       // 等速モード時も現在のstepIntervalでタイマをセット（開始時の位相不整合を避ける）
       switch(idx) {
@@ -685,10 +688,19 @@ void processCommand(byte* cmd) {
     currentSpeedSps[idx] = 0.0f;
     planActive[idx] = false;
     planStepsDone[idx] = 0;
+    // LCD表示
+    lcdClear();
+    lcdPrint("Stop");
   } else if (action == 'F') {  // 正転
     digitalWrite(dirPins[idx], HIGH);
+    // LCD表示
+    lcdClear();
+    lcdPrint("Forward");
   } else if (action == 'R') {  // 逆転
     digitalWrite(dirPins[idx], LOW);
+    // LCD表示
+    lcdClear();
+    lcdPrint("Reverse");
   } else if (action == 'V') {  // 速度変更 (rpm)
     if (value > 0) {
       if (useTrapezoid[idx]) {
@@ -707,11 +719,20 @@ void processCommand(byte* cmd) {
         pendingIntervalUpdate[idx] = true;
         targetSpeedSps[idx] = rpmToSps(value);
       }
+      // LCD表示
+      lcdClear();
+      lcdPrint("Speed");
     }
   } else if (action == 'E') {  // Enable ON
     digitalWrite(enaPins[idx], LOW);
+    // LCD表示
+    lcdClear();
+    lcdPrint("Enable ON");
   } else if (action == 'D') {  // Enable OFF
     digitalWrite(enaPins[idx], HIGH);
+    // LCD表示
+    lcdClear();
+    lcdPrint("Enable OFF");
   } else if (action == 'A') {  // 台形加減速のON/OFF（0:OFF, それ以外:ON）
     useTrapezoid[idx] = (value != 0);
     // OFFにしたら当該モータのみ等速設定へ即時反映
@@ -726,6 +747,9 @@ void processCommand(byte* cmd) {
       planActive[idx] = false;
       planStepsDone[idx] = 0;
     }
+    // LCD表示
+    lcdClear();
+    lcdPrint("response");
   } else if (action == 'C') {  // 電流データ取得（ダミー応答）
     // STX + ポンプNo + 電流値(符号+5桁整数) + ETX + CS の形式で送信
     char response[11];
@@ -750,8 +774,10 @@ void processCommand(byte* cmd) {
     // 応答を送信
     Serial.write(response, 10);
     
-    // LCDに詳細情報を表示
-    lcdShowDetailedInfo();
+    // LCD表示
+    lcdClear();
+    lcdPrint("Receive Current ");
+    lcdPrint("response");
   } else if (action == 'X') {  // 回転情報取得
     // STX + ポンプNo + RPM(6桁整数) + ETX + CS の形式で送信
     char response[11];
@@ -780,8 +806,10 @@ void processCommand(byte* cmd) {
     // 応答を送信
     Serial.write(response, 10);
     
-    // LCDに詳細情報を表示
-    lcdShowDetailedInfo();
+    // LCD表示
+    lcdClear();
+    lcdPrint("Receive Rotate X");
+    lcdPrint("response");
   }
 }
 

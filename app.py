@@ -34,9 +34,18 @@ frame_buffer = None
 frame_lock = threading.Lock()
 is_raspberry_pi = False
 
+# OS判定
+import platform
+IS_WINDOWS = platform.system() == "Windows"
+
 # シリアル通信設定（ハイセラポンプ制御用）
-SERIAL_PORT_1 = "COM18"  # Windows環境の場合（ハイセラポンプ1-3用）
-SERIAL_PORT_2 = "COM20"  # Windows環境の場合（ハイセラポンプ4-6用）
+if IS_WINDOWS:
+    SERIAL_PORT_1 = "COM18"  # Windows環境の場合（ハイセラポンプ1-3用）
+    SERIAL_PORT_2 = "COM20"  # Windows環境の場合（ハイセラポンプ4-6用）
+else:
+    SERIAL_PORT_1 = "/dev/ttyACM0"  # Linux/Raspberry Pi環境の場合（ハイセラポンプ1-3用）
+    SERIAL_PORT_2 = "/dev/ttyACM1"  # Linux/Raspberry Pi環境の場合（ハイセラポンプ4-6用）
+
 BAUD_RATE = 9600
 ser_1 = None  # ポンプ1-3用
 ser_2 = None  # ポンプ4-6用
@@ -44,7 +53,11 @@ serial_initialized1 = False # ポンプ1-3用シリアル通信初期化フラ�
 serial_initialized2 = False # ポンプ4-6用シリアル通信初期化フラグ
 
 # シリアル通信設定（シリンジポンプ制御用）
-SYRINGE_SERIAL_PORT = "COM22"  # Windows環境の場合（シリンジポンプ）
+if IS_WINDOWS:
+    SYRINGE_SERIAL_PORT = "COM22"  # Windows環境の場合（シリンジポンプ）
+else:
+    SYRINGE_SERIAL_PORT = "/dev/ttyACM2"  # Linux/Raspberry Pi環境の場合（シリンジポンプ）
+
 SYRINGE_BAUD_RATE = 9600
 ser_syringe = None
 syringe_serial_initialized = False
@@ -53,24 +66,36 @@ syringe_pump_controllers = []  # シリンジポンプ制御インスタンス�
 def initialize_serial():
     """シリアル通信を初期化（ハイセラポンプ）"""
     global ser_1, ser_2, serial_initialized_1, serial_initialized_2
+    
+    print(f"OS: {platform.system()}")
+    print(f"シリアルポート設定:")
+    print(f"  ポンプ1-3用: {SERIAL_PORT_1}")
+    print(f"  ポンプ4-6用: {SERIAL_PORT_2}")
+    
     try:
-        # COM18の初期化
+        # ポンプ1-3用ポートの初期化
         print(f"ポート {SERIAL_PORT_1} を開こうとしています...")
         ser_1 = serial.Serial(SERIAL_PORT_1, BAUD_RATE, timeout=1)
-        print(f"ハイセラポンプ1-3用シリアル通信が正常に初期化されました: {SERIAL_PORT_1}")
+        print(f"✓ ハイセラポンプ1-3用シリアル通信が正常に初期化されました: {SERIAL_PORT_1}")
         serial_initialized_1 = True
     except Exception as e:
-        print(f"ハイセラポンプ1-3用シリアル通信初期化エラー: {e}")
+        print(f"✗ ハイセラポンプ1-3用シリアル通信初期化エラー: {e}")
+        if not IS_WINDOWS:
+            print("   → デバイスが接続されているか確認してください")
+            print("   → デバイス権限があるか確認してください（sudoが必要な場合があります）")
         serial_initialized_1 = False
 
     try:
-        # COM20の初期化
+        # ポンプ4-6用ポートの初期化
         print(f"ポート {SERIAL_PORT_2} を開こうとしています...")
         ser_2 = serial.Serial(SERIAL_PORT_2, BAUD_RATE, timeout=1)
-        print(f"ハイセラポンプ4-6用シリアル通信が正常に初期化されました: {SERIAL_PORT_2}")
+        print(f"✓ ハイセラポンプ4-6用シリアル通信が正常に初期化されました: {SERIAL_PORT_2}")
         serial_initialized_2 = True
     except Exception as e:
-        print(f"ハイセラポンプ4-6用シリアル通信初期化エラー: {e}")
+        print(f"✗ ハイセラポンプ4-6用シリアル通信初期化エラー: {e}")
+        if not IS_WINDOWS:
+            print("   → デバイスが接続されているか確認してください")
+            print("   → デバイス権限があるか確認してください（sudoが必要な場合があります）")
         serial_initialized_2 = False
 
     # 両方の初期化結果を返す
@@ -79,6 +104,9 @@ def initialize_serial():
 def initialize_syringe_serial():
     """シリアル通信を初期化（シリンジポンプ）"""
     global ser_syringe, syringe_serial_initialized, syringe_pump_controllers
+    
+    print(f"シリンジポンプ用ポート: {SYRINGE_SERIAL_PORT}")
+    
     try:
         ser_syringe = serial.Serial(SYRINGE_SERIAL_PORT, SYRINGE_BAUD_RATE, timeout=1)
         syringe_serial_initialized = True
@@ -89,11 +117,14 @@ def initialize_syringe_serial():
             controller = SyringePumpController(i, ser_syringe)
             syringe_pump_controllers.append(controller)
         
-        print(f"シリンジポンプ用シリアル通信が正常に初期化されました: {SYRINGE_SERIAL_PORT}")
-        print(f"6個のポンプ制御インスタンスを作成しました")
+        print(f"✓ シリンジポンプ用シリアル通信が正常に初期化されました: {SYRINGE_SERIAL_PORT}")
+        print(f"✓ 6個のポンプ制御インスタンスを作成しました")
         return True
     except Exception as e:
-        print(f"シリンジポンプ用シリアル通信初期化エラー: {e}")
+        print(f"✗ シリンジポンプ用シリアル通信初期化エラー: {e}")
+        if not IS_WINDOWS:
+            print("   → デバイスが接続されているか確認してください")
+            print("   → デバイス権限があるか確認してください（sudoが必要な場合があります）")
         syringe_serial_initialized = False
         return False
 
@@ -151,34 +182,57 @@ def initialize_camera():
     try:
         if PICAMERA_AVAILABLE:
             # Picamera2を使用（ラズパイ公式カメラモジュール用）
+            print("Picamera2でカメラを初期化中...")
             camera = Picamera2()
             
             # カメラ設定
             config = camera.create_preview_configuration(
                 main={"size": (640, 480)},
-                encode="main"
+                encode="main",
+                buffer_count=4  # バッファ数を増やす
             )
             camera.configure(config)
             camera.start()
             
-            is_raspberry_pi = True
-            camera_initialized = True
-            print("Raspberry Piカメラが正常に初期化されました")
-            return True
+            # カメラの起動を待機
+            print("カメラの起動を待機中...")
+            time.sleep(2)  # 2秒待機
+            
+            # テストフレームを取得して動作確認
+            try:
+                test_frame = camera.capture_array()
+                print(f"テストフレーム取得成功: サイズ={test_frame.shape}")
+                is_raspberry_pi = True
+                camera_initialized = True
+                print("Raspberry Piカメラが正常に初期化されました")
+                return True
+            except Exception as e:
+                print(f"テストフレーム取得失敗: {e}")
+                camera_initialized = False
+                return False
         else:
             # PC環境ではOpenCVのVideoCaptureを使用
+            print("OpenCVでPCカメラを初期化中...")
             camera = cv2.VideoCapture(0)  # デフォルトカメラ
             
             if camera.isOpened():
                 # カメラ設定
                 camera.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
                 camera.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
-                camera.set(cv2.CAP_PROP_FPS, 60)
+                camera.set(cv2.CAP_PROP_FPS, 30)
                 
-                is_raspberry_pi = False
-                camera_initialized = True
-                print("PCカメラが正常に初期化されました")
-                return True
+                # テストフレームを取得して動作確認
+                ret, test_frame = camera.read()
+                if ret:
+                    print(f"PCカメラテストフレーム取得成功: サイズ={test_frame.shape}")
+                    is_raspberry_pi = False
+                    camera_initialized = True
+                    print("PCカメラが正常に初期化されました")
+                    return True
+                else:
+                    print("PCカメラのテストフレーム取得に失敗しました")
+                    camera_initialized = False
+                    return False
             else:
                 print("PCカメラの初期化に失敗しました")
                 camera_initialized = False
@@ -194,26 +248,42 @@ def get_frame():
     global camera, camera_initialized, is_raspberry_pi
     
     if not camera_initialized:
+        print("カメラが初期化されていません")
         return None
     
     try:
         if is_raspberry_pi and PICAMERA_AVAILABLE:
             # Raspberry Piカメラから画像をキャプチャ
-            frame = camera.capture_array()
-            
-            # BGRからRGBに変換（OpenCVはBGR、Web表示はRGB）
-            frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            
-            return frame_rgb
+            try:
+                frame = camera.capture_array()
+                
+                if frame is None or frame.size == 0:
+                    print("ラズパイカメラから空のフレームが取得されました")
+                    return None
+                
+                # フレームサイズの確認
+                if frame.shape[0] == 0 or frame.shape[1] == 0:
+                    print(f"ラズパイカメラから無効なフレームサイズ: {frame.shape}")
+                    return None
+                
+                # BGRからRGBに変換（OpenCVはBGR、Web表示はRGB）
+                frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                
+                return frame_rgb
+                
+            except Exception as e:
+                print(f"ラズパイカメラフレーム取得エラー: {e}")
+                return None
         else:
             # PCカメラから画像をキャプチャ
             ret, frame = camera.read()
             
-            if ret:
+            if ret and frame is not None:
                 # BGRからRGBに変換
                 frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                 return frame_rgb
             else:
+                print("PCカメラからフレームが取得できませんでした")
                 return None
         
     except Exception as e:
@@ -222,20 +292,40 @@ def get_frame():
 
 def generate_frames():
     """MJPEGストリーミング用のフレーム生成"""
+    frame_count = 0
+    error_count = 0
+    
     while True:
-        frame = get_frame()
-        
-        if frame is not None:
-            # JPEGエンコード
-            ret, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
+        try:
+            frame = get_frame()
             
-            if ret:
-                # MJPEGストリーミング用のヘッダー付きでフレームを返す
-                yield (b'--frame\r\n'
-                       b'Content-Type: image/jpeg\r\n\r\n' + buffer.tobytes() + b'\r\n')
-        
-        # フレームレート制御（30FPS）
-        time.sleep(1/30)
+            if frame is not None:
+                # JPEGエンコード
+                ret, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
+                
+                if ret:
+                    frame_count += 1
+                    if frame_count % 100 == 0:  # 100フレームごとにログ出力
+                        print(f"ストリーミング中: {frame_count}フレーム送信完了")
+                    
+                    # MJPEGストリーミング用のヘッダー付きでフレームを返す
+                    yield (b'--frame\r\n'
+                           b'Content-Type: image/jpeg\r\n\r\n' + buffer.tobytes() + b'\r\n')
+                else:
+                    print("JPEGエンコードに失敗しました")
+                    error_count += 1
+            else:
+                error_count += 1
+                if error_count % 10 == 0:  # 10エラーごとにログ出力
+                    print(f"フレーム取得エラー: {error_count}回目")
+            
+            # フレームレート制御（30FPS）
+            time.sleep(1/30)
+            
+        except Exception as e:
+            print(f"ストリーミング生成エラー: {e}")
+            error_count += 1
+            time.sleep(1)  # エラー時は1秒待機
 
 @app.route('/')
 def index():
@@ -261,8 +351,35 @@ def video_feed():
 @app.route('/api/status')
 def api_status():
     """カメラ状態API"""
+    # カメラの詳細情報を取得
+    camera_info = {
+        'initialized': camera_initialized,
+        'type': 'Raspberry Pi' if is_raspberry_pi else 'PC',
+        'picamera_available': PICAMERA_AVAILABLE
+    }
+    
+    # カメラが初期化されている場合、追加情報を取得
+    if camera_initialized and camera is not None:
+        try:
+            if is_raspberry_pi and PICAMERA_AVAILABLE:
+                # ラズパイカメラの情報
+                camera_info.update({
+                    'status': 'active',
+                    'resolution': '640x480',
+                    'fps': 30
+                })
+            else:
+                # PCカメラの情報
+                camera_info.update({
+                    'status': 'active' if camera.isOpened() else 'inactive',
+                    'resolution': f"{int(camera.get(cv2.CAP_PROP_FRAME_WIDTH))}x{int(camera.get(cv2.CAP_PROP_FRAME_HEIGHT))}",
+                    'fps': int(camera.get(cv2.CAP_PROP_FPS))
+                })
+        except Exception as e:
+            camera_info['error'] = str(e)
+    
     return jsonify({
-        'camera_initialized': camera_initialized,
+        'camera': camera_info,
         'serial_initialized_1': serial_initialized_1,  # ハイセラポンプ1-3
         'serial_initialized_2': serial_initialized_2,  # ハイセラポンプ4-6
         'syringe_serial_initialized': syringe_serial_initialized,
@@ -288,23 +405,45 @@ def api_snapshot():
 @app.route('/api/restart_camera')
 def api_restart_camera():
     """カメラ再起動API"""
-    global camera, camera_initialized
+    global camera, camera_initialized, is_raspberry_pi
     
     try:
+        print("カメラ再起動を開始します...")
+        
         if camera is not None:
             if is_raspberry_pi and PICAMERA_AVAILABLE:
+                print("ラズパイカメラを停止中...")
                 camera.stop()
                 camera.close()
             else:
+                print("PCカメラを停止中...")
                 camera.release()
         
+        # カメラ変数をリセット
+        camera = None
+        camera_initialized = False
+        
+        # 少し待機してから再初期化
+        time.sleep(1)
+        
         success = initialize_camera()
-        return jsonify({
-            'success': success,
-            'message': 'カメラを再起動しました' if success else 'カメラ再起動に失敗しました'
-        })
+        
+        if success:
+            print("カメラ再起動が完了しました")
+            return jsonify({
+                'success': True,
+                'message': 'カメラを再起動しました',
+                'camera_type': 'Raspberry Pi' if is_raspberry_pi else 'PC'
+            })
+        else:
+            print("カメラ再起動に失敗しました")
+            return jsonify({
+                'success': False,
+                'message': 'カメラ再起動に失敗しました'
+            })
         
     except Exception as e:
+        print(f"カメラ再起動エラー: {e}")
         return jsonify({
             'success': False,
             'message': f'エラー: {str(e)}'
@@ -659,41 +798,79 @@ if __name__ == '__main__':
     parser.add_argument('--debug', action='store_true', help='デバッグモードで起動')
     parser.add_argument('--port', type=int, default=5000, help='ポート番号（デフォルト: 5000）')
     parser.add_argument('--host', type=str, default='0.0.0.0', help='ホストアドレス（デフォルト: 0.0.0.0）')
-    parser.add_argument('--serial-port-1', type=str, default='COM18', help='ハイセラポンプ1-3用シリアルポート（デフォルト: COM18）')
-    parser.add_argument('--serial-port-2', type=str, default='COM20', help='ハイセラポンプ4-6用シリアルポート（デフォルト: COM20）')
-    parser.add_argument('--syringe-serial-port', type=str, default='COM19', help='シリンジポンプ用シリアルポート（デフォルト: COM19）')
+    # OSに応じたデフォルトポート設定
+    default_port_1 = 'COM18' if IS_WINDOWS else '/dev/ttyACM0'
+    default_port_2 = 'COM20' if IS_WINDOWS else '/dev/ttyACM1'
+    default_syringe_port = 'COM19' if IS_WINDOWS else '/dev/ttyACM2'
+    
+    parser.add_argument('--serial-port-1', type=str, default=default_port_1, 
+                       help=f'ハイセラポンプ1-3用シリアルポート（デフォルト: {default_port_1}）')
+    parser.add_argument('--serial-port-2', type=str, default=default_port_2, 
+                       help=f'ハイセラポンプ4-6用シリアルポート（デフォルト: {default_port_2}）')
+    parser.add_argument('--syringe-serial-port', type=str, default=default_syringe_port, 
+                       help=f'シリンジポンプ用シリアルポート（デフォルト: {default_syringe_port}）')
     
     args = parser.parse_args()
     
     # シリアルポート設定を更新（ハイセラ／シリンジ）
-    # SERIAL_PORT_1 = args.serial_port_1
-    # SERIAL_PORT_2 = args.serial_port_2
-    # SYRINGE_SERIAL_PORT = args.syringe_serial_port
+    # コマンドライン引数で指定された場合は上書き
+    SERIAL_PORT_1 = args.serial_port_1
+    SERIAL_PORT_2 = args.serial_port_2
+    SYRINGE_SERIAL_PORT = args.syringe_serial_port
+    
+    # システム情報表示
+    print("=" * 50)
+    print("システム情報:")
+    print(f"OS: {platform.system()} {platform.release()}")
+    print(f"Python: {platform.python_version()}")
+    print(f"カメラライブラリ: {'Picamera2' if PICAMERA_AVAILABLE else 'OpenCV'}")
+    print("=" * 50)
+    
+    # シリアルポート設定表示
+    print("\nシリアルポート設定:")
+    print(f"ハイセラポンプ1-3用: {SERIAL_PORT_1}")
+    print(f"ハイセラポンプ4-6用: {SERIAL_PORT_2}")
+    print(f"シリンジポンプ用: {SYRINGE_SERIAL_PORT}")
+    print("=" * 50)
     
     # カメラ初期化
+    print("\nカメラ初期化を開始します...")
     camera_success = initialize_camera()
     
+    if camera_success:
+        print(f"✓ カメラ初期化成功: {'Raspberry Pi' if is_raspberry_pi else 'PC'}カメラ")
+    else:
+        print("✗ カメラ初期化失敗")
+        if PICAMERA_AVAILABLE:
+            print("   → ラズパイにカメラモジュールが接続されているか確認してください")
+            print("   → カメラモジュールの電源が入っているか確認してください")
+            print("   → カメラケーブルが正しく接続されているか確認してください")
+        else:
+            print("   → PCにWebカメラが接続されているか確認してください")
+    
     # シリアル通信初期化（ハイセラ／シリンジ）
+    print("\nシリアル通信初期化を開始します...")
     serial_success = initialize_serial()
     syringe_serial_success = initialize_syringe_serial()
     
+    print("\n" + "=" * 50)
     print("Webサーバーを起動します...")
     print(f"ブラウザで http://localhost:{args.port} にアクセスしてください")
     print(f"ポンプ制御ページ: http://localhost:{args.port}/pump_control")
-    
-    if not camera_success:
-        print("警告: カメラの初期化に失敗しました。")
-        if PICAMERA_AVAILABLE:
-            print("ラズパイにカメラモジュールが接続されているか確認してください。")
-        else:
-            print("PCにWebカメラが接続されているか確認してください。")
+    print("=" * 50)
     
     if not serial_success:
         print("警告: ハイセラポンプ用シリアル通信の初期化に失敗しました。")
         print(f"シリアルポート {SERIAL_PORT_1}（ポンプ1-3用）または {SERIAL_PORT_2}（ポンプ4-6用）が利用可能か確認してください。")
+        if not IS_WINDOWS:
+            print("   → ラズパイでUSBデバイスが認識されているか確認してください")
+            print("   → デバイス権限があるか確認してください")
     if not syringe_serial_success:
         print("警告: シリンジポンプ用シリアル通信の初期化に失敗しました。")
         print(f"シリアルポート {SYRINGE_SERIAL_PORT} が利用可能か確認してください。")
+        if not IS_WINDOWS:
+            print("   → ラズパイでUSBデバイスが認識されているか確認してください")
+            print("   → デバイス権限があるか確認してください")
     
     # 開発サーバー起動（本番環境ではgunicorn等を使用）
     app.run(host=args.host, port=args.port, debug=args.debug, threaded=True)
