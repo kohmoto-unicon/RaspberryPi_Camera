@@ -749,7 +749,7 @@ void processCommand(byte* cmd) {
     }
     // LCD表示
     lcdClear();
-    lcdPrint("response");
+    lcdPrint("ReceiveTrapezoid");
   } else if (action == 'C') {  // 電流データ取得（ダミー応答）
     // STX + ポンプNo + 電流値(符号+5桁整数) + ETX + CS の形式で送信
     char response[11];
