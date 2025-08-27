@@ -1,0 +1,14 @@
+[Unit]
+Description=Raspberry Pi Camera Streaming Server (Offline)
+After=network.target
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/home/kohmoto/projects/RaspberryPi_Camera
+ExecStart=/home/kohmoto/projects/RaspberryPi_Camera/venv/bin/python /home/kohmoto/projects/RaspberryPi_Camera/app.py
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
