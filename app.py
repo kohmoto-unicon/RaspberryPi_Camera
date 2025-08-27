@@ -35,8 +35,10 @@ frame_lock = threading.Lock()
 is_raspberry_pi = False
 
 # シリアル通信設定（ハイセラポンプ制御用）
-SERIAL_PORT_1 = "COM18"  # Windows環境の場合（ハイセラポンプ1-3用）
-SERIAL_PORT_2 = "COM20"  # Windows環境の場合（ハイセラポンプ4-6用）
+# SERIAL_PORT_1 = "COM18"  # Windows環境の場合（ハイセラポンプ1-3用）
+# SERIAL_PORT_2 = "COM20"  # Windows環境の場合（ハイセラポンプ4-6用）
+SERIAL_PORT_1 = "/dev/ttyACM0"  # Linux環境の場合（ハイセラポンプ1-3用）
+SERIAL_PORT_2 = "/dev/ttyACM1"  # Linux環境の場合（ハイセラポンプ4-6用）
 BAUD_RATE = 9600
 ser_1 = None  # ポンプ1-3用
 ser_2 = None  # ポンプ4-6用
@@ -44,7 +46,8 @@ serial_initialized1 = False # ポンプ1-3用シリアル通信初期化フラ�
 serial_initialized2 = False # ポンプ4-6用シリアル通信初期化フラグ
 
 # シリアル通信設定（シリンジポンプ制御用）
-SYRINGE_SERIAL_PORT = "COM22"  # Windows環境の場合（シリンジポンプ）
+# SYRINGE_SERIAL_PORT = "COM22"  # Windows環境の場合（シリンジポンプ）
+SYRINGE_SERIAL_PORT = "/dev/ttyUSB0"  # Linux環境の場合（シリンジポンプ）
 SYRINGE_BAUD_RATE = 9600
 ser_syringe = None
 syringe_serial_initialized = False
@@ -54,7 +57,7 @@ def initialize_serial():
     """シリアル通信を初期化（ハイセラポンプ）"""
     global ser_1, ser_2, serial_initialized_1, serial_initialized_2
     try:
-        # COM18の初期化
+        # Portの初期化
         print(f"ポート {SERIAL_PORT_1} を開こうとしています...")
         ser_1 = serial.Serial(SERIAL_PORT_1, BAUD_RATE, timeout=1)
         print(f"ハイセラポンプ1-3用シリアル通信が正常に初期化されました: {SERIAL_PORT_1}")

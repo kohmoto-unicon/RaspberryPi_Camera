@@ -1,0 +1,19 @@
+# オフラインインストール用 requirements.txt
+# 以下のパッケージファイルをUSBメモリに配置してください
+
+# Webフレームワーク
+Flask==2.3.3
+
+# 画像処理
+opencv-python==4.8.1.78
+Pillow==10.0.1
+
+# ラズパイカメラ
+picamera2==0.3.12
+
+# 数値計算
+numpy==1.24.3
+
+# インストール方法:
+# 1. 上記パッケージの.whlファイルをUSBメモリに配置
+# 2. venv/bin/pip install /path/to/usb/package.whl
