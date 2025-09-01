@@ -201,26 +201,25 @@ def send_serial_command(pump_no, action, value="000000"):
         return False
 
 def initialize_camera():
-    """カメラを初期化"""
-    global camera, camera_initialized, is_raspberry_pi
-    
     try:
+        # jpeg_buffer 等も関数内で設定するので global 宣言を追加
+        global camera, camera_initialized, is_raspberry_pi, jpeg_buffer, jpeg_encoder, jpeg_output
         if PICAMERA_AVAILABLE:
             # Picamera2を使用（ラズパイ公式カメラモジュール用）
             print("Picamera2でカメラを初期化中...")
-            
+
             # カメラモジュールの状態確認
             try:
                 import subprocess
-                result = subprocess.run(['vcgencmd', 'get_camera'], 
-                                     capture_output=True, text=True, timeout=5)
+                result = subprocess.run(['vcgencmd', 'get_camera'],
+                                        capture_output=True, text=True, timeout=5)
                 if result.returncode == 0:
                     print(f"カメラモジュール状態: {result.stdout.strip()}")
                 else:
                     print("カメラモジュール状態確認に失敗")
             except Exception as e:
                 print(f"カメラモジュール状態確認エラー: {e}")
-            
+
             # カメラデバイスの確認
             try:
                 import os
@@ -228,9 +227,9 @@ def initialize_camera():
                 print(f"利用可能なビデオデバイス: {video_devices}")
             except Exception as e:
                 print(f"ビデオデバイス確認エラー: {e}")
-            
+
             camera = Picamera2()
-            
+
             # カメラ設定
             print("カメラ設定を作成中...")
             config = camera.create_preview_configuration(
@@ -241,7 +240,24 @@ def initialize_camera():
             print("カメラ設定を適用中...")
             camera.configure(config)
 
-            # --- 追加: Picamera2 にフレームレートを明示設定 ---
+            # Picamera2 のハードウェアJPEGエンコーダ準備（利用可能なら）
+            try:
+                jpeg_buffer = _JpegBuffer()
+                # JpegEncoder の引数名はバージョンにより差異があるため双方を試す
+                try:
+                    jpeg_encoder = JpegEncoder(quality=85)
+                except TypeError:
+                    jpeg_encoder = JpegEncoder(q=85)
+                # FileOutput に BufferedIOBase を渡す
+                jpeg_output = FileOutput(jpeg_buffer)
+                print("ハードウェアJPEGエンコーダを初期化しました")
+            except Exception as e:
+                print(f"ハードウェアJPEGエンコーダ初期化失敗: {e}")
+                jpeg_buffer = None
+                jpeg_encoder = None
+                jpeg_output = None
+
+            # Picamera2 にフレームレートを明示設定
             try:
                 camera.set_controls({"FrameRate": CAM_FPS})
                 print(f"FrameRate を {CAM_FPS}fps に設定しました")
@@ -250,61 +266,63 @@ def initialize_camera():
 
             print("カメラを起動中...")
             camera.start()
-            
-            # カメラの起動を待機
-            print("カメラの起動を待機中...")
-            time.sleep(3)  # 3秒に延長
-            
-            # テストフレームを取得して動作確認
-            try:
-                print("テストフレームを取得中...")
-                test_frame = camera.capture_array()
-                print(f"テストフレーム取得成功: サイズ={test_frame.shape}")
-                is_raspberry_pi = True
-                camera_initialized = True
-                print("Raspberry Piカメラが正常に初期化されました")
-                return True
-            except Exception as e:
-                print(f"テストフレーム取得失敗: {e}")
-                print(f"エラーの詳細: {type(e).__name__}")
-                camera_initialized = False
-                return False
+
+            # ハードウェアエンコーダの録画/出力開始（可能なら試行）
+            started_hw = False
+            if jpeg_encoder and jpeg_output:
+                try:
+                    camera.start_recording(jpeg_encoder, jpeg_output)
+                    print("Picamera2: ハードウェアエンコード録画を開始しました")
+                    started_hw = True
+                except Exception as e:
+                    print(f"Picamera2 ハードウェア録画開始エラー: {e}")
+                    # フォールバック：jpeg_buffer を無効化（出力経路は無効化）
+                    jpeg_buffer = None
+                    jpeg_encoder = None
+                    jpeg_output = None
+
+            # 成功とみなす（start() 成功ならカメラは使用可能）
+            camera_initialized = True
+            is_raspberry_pi = True
+            print("Picamera2 カメラ初期化完了（ハードウェアエンコーダ使用:" + ("有効" if started_hw else "無効") + "）")
+            return True
+
         else:
             # OpenCVを使用（PCカメラまたはラズパイカメラモジュール）
             import platform
             is_raspberry_pi_hardware = platform.system() == "Linux" and "raspberry" in platform.machine().lower()
-            
+
             if is_raspberry_pi_hardware:
                 print("OpenCVでラズパイカメラモジュールを初期化中...")
-                # ラズパイカメラモジュール用のデバイスを優先的に試行
-                camera_devices = [0, 10, 11, 12]  # ラズパイカメラモジュール用の一般的なデバイス番号
+                camera_devices = [0, 10, 11, 12]  # ラズパイ用候補
             else:
                 print("OpenCVでPCカメラを初期化中...")
                 camera_devices = [0]  # PCカメラ用
-            
-            camera = None
+
+            camera_local = None
             for device_id in camera_devices:
                 try:
                     print(f"カメラデバイス {device_id} を試行中...")
-                    camera = cv2.VideoCapture(device_id)
-                    
-                    if camera.isOpened():
+                    camera_local = cv2.VideoCapture(device_id)
+
+                    if camera_local.isOpened():
                         # カメラ設定
-                        camera.set(cv2.CAP_PROP_FRAME_WIDTH, CAM_WIDTH)
-                        camera.set(cv2.CAP_PROP_FRAME_HEIGHT, CAM_HEIGHT)
-                        camera.set(cv2.CAP_PROP_FPS, CAM_FPS)
-                        
-                        # --- 追加: 要求したFPSが反映されたかログ出力 ---
+                        camera_local.set(cv2.CAP_PROP_FRAME_WIDTH, CAM_WIDTH)
+                        camera_local.set(cv2.CAP_PROP_FRAME_HEIGHT, CAM_HEIGHT)
+                        camera_local.set(cv2.CAP_PROP_FPS, CAM_FPS)
+
+                        # 要求したFPSが反映されたかログ出力
                         try:
-                            actual_fps = camera.get(cv2.CAP_PROP_FPS)
+                            actual_fps = camera_local.get(cv2.CAP_PROP_FPS)
                             print(f"要求FPS={CAM_FPS} -> 実際FPS={actual_fps}")
                         except Exception as e:
                             print(f"OpenCV FPS確認エラー: {e}")
 
                         # テストフレームを取得して動作確認
-                        ret, test_frame = camera.read()
+                        ret, test_frame = camera_local.read()
                         if ret and test_frame is not None:
                             print(f"カメラデバイス {device_id} でテストフレーム取得成功: サイズ={test_frame.shape}")
+                            camera = camera_local
                             is_raspberry_pi = is_raspberry_pi_hardware
                             camera_initialized = True
                             camera_type = "ラズパイカメラモジュール" if is_raspberry_pi_hardware else "PCカメラ"
@@ -312,21 +330,20 @@ def initialize_camera():
                             return True
                         else:
                             print(f"カメラデバイス {device_id} でテストフレーム取得に失敗")
-                            camera.release()
-                            camera = None
+                            camera_local.release()
+                            camera_local = None
                     else:
                         print(f"カメラデバイス {device_id} を開けませんでした")
                 except Exception as e:
                     print(f"カメラデバイス {device_id} の初期化エラー: {e}")
-                    if camera:
-                        camera.release()
-                        camera = None
-            
-            if camera is None:
-                print("利用可能なカメラデバイスが見つかりませんでした")
-                camera_initialized = False
-                return False
-        
+                    if camera_local:
+                        camera_local.release()
+                        camera_local = None
+
+            print("利用可能なカメラデバイスが見つかりませんでした")
+            camera_initialized = False
+            return False
+
     except Exception as e:
         print(f"カメラ初期化エラー: {e}")
         print(f"エラーの詳細: {type(e).__name__}")
@@ -383,41 +400,51 @@ def get_frame():
         return None
 
 def generate_frames():
-    """MJPEGストリーミング用のフレーム生成"""
+    """MJPEGストリーミング用のフレーム生成（ハードウェアJPEGがあれば優先使用）"""
+    global jpeg_buffer, camera, camera_initialized, is_raspberry_pi
+
     frame_count = 0
     error_count = 0
-    
+
     while True:
         try:
+            # ハードウェアエンコード経路（Picamera2 が有効でかつバッファがある場合）
+            if is_raspberry_pi and PICAMERA_AVAILABLE and jpeg_buffer is not None:
+                jpeg_bytes = jpeg_buffer.get()
+                if jpeg_bytes and len(jpeg_bytes) > 0:
+                    frame_count += 1
+                    if frame_count % 1000 == 0:
+                        print(f"ハードウェア経路で送信: {frame_count}フレーム")
+                    yield (b'--frame\r\n'
+                           b'Content-Type: image/jpeg\r\n\r\n' + jpeg_bytes + b'\r\n')
+                    time.sleep(1.0 / max(1, CAM_FPS))
+                    continue
+                # バッファ空なら通常経路へフォールバック
+
+            # 既存のソフトウェア経路（cv2.imencode）
             frame = get_frame()
-            
             if frame is not None:
-                # JPEGエンコード
                 ret, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
-                
                 if ret:
                     frame_count += 1
-                    if frame_count % 1000 == 0:  # 100フレームごとにログ出力
-                        print(f"ストリーミング中: {frame_count}フレーム送信完了")
-                    
-                    # MJPEGストリーミング用のヘッダー付きでフレームを返す
+                    if frame_count % 1000 == 0:
+                        print(f"ソフトウェア経路で送信: {frame_count}フレーム")
                     yield (b'--frame\r\n'
                            b'Content-Type: image/jpeg\r\n\r\n' + buffer.tobytes() + b'\r\n')
                 else:
-                    print("JPEGエンコードに失敗しました")
                     error_count += 1
+                    print("JPEGエンコードに失敗しました（ソフトウェア経路）")
             else:
                 error_count += 1
-                if error_count % 10 == 0:  # 10エラーごとにログ出力
+                if error_count % 10 == 0:
                     print(f"フレーム取得エラー: {error_count}回目")
-            
-            # フレームレート制御（CAM_FPS）
+
             time.sleep(1.0 / max(1, CAM_FPS))
-            
+
         except Exception as e:
             print(f"ストリーミング生成エラー: {e}")
             error_count += 1
-            time.sleep(1)  # エラー時は1秒待機
+            time.sleep(1)
 
 @app.route('/')
 def index():
@@ -953,6 +980,38 @@ def api_set_camera_settings():
         'height': CAM_HEIGHT,
         'fps': CAM_FPS
     })
+
+# --- 変更: BufferedIOBase を継承する JPEG バッファ ---
+class _JpegBuffer(io.BufferedIOBase):
+    def __init__(self):
+        super().__init__()
+        self.lock = threading.Lock()
+        self._data = b''
+
+    def writable(self):
+        return True
+
+    def write(self, b):
+        """FileOutput から渡される JPEG バイト列を受け取る"""
+        if not isinstance(b, (bytes, bytearray)):
+            b = bytes(b)
+        with self.lock:
+            self._data = b
+        # 書き込んだバイト数を返す（BufferedIOBase の規約）
+        return len(b)
+
+    def flush(self):
+        # 何もしない（必要なら実装）
+        return None
+
+    def get(self):
+        with self.lock:
+            return self._data
+
+# グローバル変数
+jpeg_buffer = None
+jpeg_encoder = None
+jpeg_output = None
 
 if __name__ == '__main__':
     import argparse
