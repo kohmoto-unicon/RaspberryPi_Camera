@@ -305,27 +305,35 @@
                 const statusIndicator = document.getElementById('cameraStatus');
                 const statusText = document.getElementById('statusText');
                 const timestamp = document.getElementById('timestamp');
-                
-                if (data.camera_initialized) {
+
+                // API が返す構造に合わせて判定（data.camera.initialized を使用）
+                const camInfo = data.camera || {};
+                const camInit = !!camInfo.initialized;
+
+                if (camInit) {
                     statusIndicator.className = 'status-indicator status-online';
-                    statusText.textContent = 'カメラ: オンライン';
+                    // 解像度やFPSがあれば表示
+                    const res = camInfo.resolution ? ` ${camInfo.resolution}` : '';
+                    const fps = camInfo.fps ? ` @${camInfo.fps}fps` : '';
+                    statusText.textContent = `カメラ: オンライン${res}${fps}`;
                 } else {
                     statusIndicator.className = 'status-indicator status-offline';
                     statusText.textContent = 'カメラ: オフライン';
                 }
                 
-                // シリアル通信状態も表示
-                if (data.serial_initialized) {
-                    console.log('シリアル通信: オンライン');
+                // シリアル通信状態（API のフィールドに合わせて判定）
+                const serialOnline = !!(data.serial_initialized_1 || data.serial_initialized_2 || data.syringe_serial_initialized);
+                console.log('シリアル通信:', serialOnline ? 'オンライン' : 'オフライン');
+                
+                if (data.timestamp) {
+                    const date = new Date(data.timestamp * 1000);
+                    timestamp.textContent = `最終更新: ${date.toLocaleString('ja-JP')}`;
                 } else {
-                    console.log('シリアル通信: オフライン');
+                    timestamp.textContent = '';
                 }
                 
-                const date = new Date(data.timestamp * 1000);
-                timestamp.textContent = `最終更新: ${date.toLocaleString('ja-JP')}`;
-                
             } catch (error) {
-                showError('状態確認に失敗しました: ' + error.message);
+                showError('状態確認に失敗しました: ' + (error.message || error));
             } finally {
                 showLoading(false);
             }

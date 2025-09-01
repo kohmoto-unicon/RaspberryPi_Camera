@@ -484,8 +484,8 @@ def api_status():
                 # ラズパイカメラの情報
                 camera_info.update({
                     'status': 'active',
-                    'resolution': '640x480',
-                    'fps': 30
+                    'resolution': f"{CAM_WIDTH}x{CAM_HEIGHT}",
+                    'fps': CAM_FPS
                 })
             else:
                 # PCカメラの情報
