@@ -371,9 +371,9 @@
       // ポンプ番号に応じてポート名を決定
       let portName;
       if (1 <= pump && pump <= 3) {
-        portName = 'COM18';
+        portName = 'USB0';
       } else if (4 <= pump && pump <= 6) {
-        portName = 'COM20';
+        portName = 'USB1';
       } else {
         portName = 'UNKNOWN';
       }
@@ -495,19 +495,19 @@
         // COM18（ポンプ1-3）の状態
         if (data.hysera_port1_status) {
           statusIndicator1.style.background = '#28a745';
-          statusText1.textContent = 'COM18（ポンプ1-3）: オンライン';
+          statusText1.textContent = 'USB0（ポンプ1-3）: オンライン';
         } else {
           statusIndicator1.style.background = '#dc3545';
-          statusText1.textContent = 'COM18（ポンプ1-3）: オフライン';
+          statusText1.textContent = 'USB0（ポンプ1-3）: オフライン';
         }
         
         // COM20（ポンプ4-6）の状態
         if (data.hysera_port2_status) {
           statusIndicator2.style.background = '#28a745';
-          statusText2.textContent = 'COM20（ポンプ4-6）: オンライン';
+          statusText2.textContent = 'USB1（ポンプ4-6）: オンライン';
         } else {
           statusIndicator2.style.background = '#dc3545';
-          statusText2.textContent = 'COM20（ポンプ4-6）: オフライン';
+          statusText2.textContent = 'USB1（ポンプ4-6）: オフライン';
         }
         
       } catch (error) {

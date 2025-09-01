@@ -57,7 +57,7 @@ is_raspberry_pi = False
 # --- 追加: 動的設定用のグローバル変数 ---
 CAM_WIDTH = 640
 CAM_HEIGHT = 480
-CAM_FPS = 60
+CAM_FPS = 45
 
 # OS判定
 import platform
