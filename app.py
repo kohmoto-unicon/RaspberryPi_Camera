@@ -22,7 +22,27 @@ try:
     print("Picamera2ライブラリが利用可能です（Raspberry Pi環境）")
 except ImportError:
     PICAMERA_AVAILABLE = False
-    print("Picamera2ライブラリが利用できません（PC環境）。OpenCVのVideoCaptureを使用します。")
+    print("Picamera2ライブラリが利用できません。OpenCVのVideoCaptureを使用します。")
+    
+    # ラズパイ環境かどうかを判定
+    import platform
+    if platform.system() == "Linux" and "raspberry" in platform.machine().lower():
+        print("ラズパイ環境を検出しました。OpenCVでカメラにアクセスを試行します。")
+        # ラズパイで利用可能なカメラデバイスを確認
+        try:
+            import os
+            video_devices = [f for f in os.listdir('/dev') if f.startswith('video')]
+            if video_devices:
+                print(f"利用可能なビデオデバイス: {video_devices}")
+                # ラズパイカメラモジュール用のデバイスを優先
+                for device in video_devices:
+                    if device in ['video0', 'video10', 'video11', 'video12']:
+                        print(f"ラズパイカメラモジュール用デバイスを検出: {device}")
+                        break
+            else:
+                print("ビデオデバイスが見つかりません")
+        except Exception as e:
+            print(f"ビデオデバイス確認エラー: {e}")
 
 app = Flask(__name__)
 
@@ -183,23 +203,48 @@ def initialize_camera():
         if PICAMERA_AVAILABLE:
             # Picamera2を使用（ラズパイ公式カメラモジュール用）
             print("Picamera2でカメラを初期化中...")
+            
+            # カメラモジュールの状態確認
+            try:
+                import subprocess
+                result = subprocess.run(['vcgencmd', 'get_camera'], 
+                                     capture_output=True, text=True, timeout=5)
+                if result.returncode == 0:
+                    print(f"カメラモジュール状態: {result.stdout.strip()}")
+                else:
+                    print("カメラモジュール状態確認に失敗")
+            except Exception as e:
+                print(f"カメラモジュール状態確認エラー: {e}")
+            
+            # カメラデバイスの確認
+            try:
+                import os
+                video_devices = [f for f in os.listdir('/dev') if f.startswith('video')]
+                print(f"利用可能なビデオデバイス: {video_devices}")
+            except Exception as e:
+                print(f"ビデオデバイス確認エラー: {e}")
+            
             camera = Picamera2()
             
             # カメラ設定
+            print("カメラ設定を作成中...")
             config = camera.create_preview_configuration(
                 main={"size": (640, 480)},
                 encode="main",
                 buffer_count=4  # バッファ数を増やす
             )
+            print("カメラ設定を適用中...")
             camera.configure(config)
+            print("カメラを起動中...")
             camera.start()
             
             # カメラの起動を待機
             print("カメラの起動を待機中...")
-            time.sleep(2)  # 2秒待機
+            time.sleep(3)  # 3秒に延長
             
             # テストフレームを取得して動作確認
             try:
+                print("テストフレームを取得中...")
                 test_frame = camera.capture_array()
                 print(f"テストフレーム取得成功: サイズ={test_frame.shape}")
                 is_raspberry_pi = True
@@ -208,38 +253,65 @@ def initialize_camera():
                 return True
             except Exception as e:
                 print(f"テストフレーム取得失敗: {e}")
+                print(f"エラーの詳細: {type(e).__name__}")
                 camera_initialized = False
                 return False
         else:
-            # PC環境ではOpenCVのVideoCaptureを使用
-            print("OpenCVでPCカメラを初期化中...")
-            camera = cv2.VideoCapture(0)  # デフォルトカメラ
+            # OpenCVを使用（PCカメラまたはラズパイカメラモジュール）
+            import platform
+            is_raspberry_pi_hardware = platform.system() == "Linux" and "raspberry" in platform.machine().lower()
             
-            if camera.isOpened():
-                # カメラ設定
-                camera.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-                camera.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
-                camera.set(cv2.CAP_PROP_FPS, 30)
-                
-                # テストフレームを取得して動作確認
-                ret, test_frame = camera.read()
-                if ret:
-                    print(f"PCカメラテストフレーム取得成功: サイズ={test_frame.shape}")
-                    is_raspberry_pi = False
-                    camera_initialized = True
-                    print("PCカメラが正常に初期化されました")
-                    return True
-                else:
-                    print("PCカメラのテストフレーム取得に失敗しました")
-                    camera_initialized = False
-                    return False
+            if is_raspberry_pi_hardware:
+                print("OpenCVでラズパイカメラモジュールを初期化中...")
+                # ラズパイカメラモジュール用のデバイスを優先的に試行
+                camera_devices = [0, 10, 11, 12]  # ラズパイカメラモジュール用の一般的なデバイス番号
             else:
-                print("PCカメラの初期化に失敗しました")
+                print("OpenCVでPCカメラを初期化中...")
+                camera_devices = [0]  # PCカメラ用
+            
+            camera = None
+            for device_id in camera_devices:
+                try:
+                    print(f"カメラデバイス {device_id} を試行中...")
+                    camera = cv2.VideoCapture(device_id)
+                    
+                    if camera.isOpened():
+                        # カメラ設定
+                        camera.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+                        camera.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+                        camera.set(cv2.CAP_PROP_FPS, 30)
+                        
+                        # テストフレームを取得して動作確認
+                        ret, test_frame = camera.read()
+                        if ret and test_frame is not None:
+                            print(f"カメラデバイス {device_id} でテストフレーム取得成功: サイズ={test_frame.shape}")
+                            is_raspberry_pi = is_raspberry_pi_hardware
+                            camera_initialized = True
+                            camera_type = "ラズパイカメラモジュール" if is_raspberry_pi_hardware else "PCカメラ"
+                            print(f"{camera_type}が正常に初期化されました（デバイスID: {device_id}）")
+                            return True
+                        else:
+                            print(f"カメラデバイス {device_id} でテストフレーム取得に失敗")
+                            camera.release()
+                            camera = None
+                    else:
+                        print(f"カメラデバイス {device_id} を開けませんでした")
+                except Exception as e:
+                    print(f"カメラデバイス {device_id} の初期化エラー: {e}")
+                    if camera:
+                        camera.release()
+                        camera = None
+            
+            if camera is None:
+                print("利用可能なカメラデバイスが見つかりませんでした")
                 camera_initialized = False
                 return False
         
     except Exception as e:
         print(f"カメラ初期化エラー: {e}")
+        print(f"エラーの詳細: {type(e).__name__}")
+        import traceback
+        traceback.print_exc()
         camera_initialized = False
         return False
 
@@ -832,6 +904,45 @@ if __name__ == '__main__':
     print(f"ハイセラポンプ4-6用: {SERIAL_PORT_2}")
     print(f"シリンジポンプ用: {SYRINGE_SERIAL_PORT}")
     print("=" * 50)
+    
+    # カメラ初期化前のシステムチェック
+    print("\nカメラ初期化前のシステムチェック...")
+    if not IS_WINDOWS:
+        try:
+            # カメラモジュールの状態確認
+            import subprocess
+            result = subprocess.run(['vcgencmd', 'get_camera'], 
+                                 capture_output=True, text=True, timeout=5)
+            if result.returncode == 0:
+                print(f"✓ カメラモジュール状態: {result.stdout.strip()}")
+            else:
+                print("✗ カメラモジュール状態確認に失敗")
+        except Exception as e:
+            print(f"✗ カメラモジュール状態確認エラー: {e}")
+        
+        try:
+            # カメラデバイスの確認
+            import os
+            video_devices = [f for f in os.listdir('/dev') if f.startswith('video')]
+            if video_devices:
+                print(f"✓ 利用可能なビデオデバイス: {video_devices}")
+                # ラズパイカメラモジュール用のデバイスを特定
+                raspberry_camera_devices = [d for d in video_devices if d in ['video0', 'video10', 'video11', 'video12']]
+                if raspberry_camera_devices:
+                    print(f"✓ ラズパイカメラモジュール用デバイス: {raspberry_camera_devices}")
+                else:
+                    print("⚠ ラズパイカメラモジュール用デバイスが見つかりません")
+            else:
+                print("✗ ビデオデバイスが見つかりません")
+        except Exception as e:
+            print(f"✗ ビデオデバイス確認エラー: {e}")
+        
+        # OpenCVのバージョン確認
+        try:
+            opencv_version = cv2.__version__
+            print(f"✓ OpenCVバージョン: {opencv_version}")
+        except Exception as e:
+            print(f"✗ OpenCVバージョン確認エラー: {e}")
     
     # カメラ初期化
     print("\nカメラ初期化を開始します...")
