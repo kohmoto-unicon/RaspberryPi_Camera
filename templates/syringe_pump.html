@@ -96,10 +96,10 @@
                 const syringeText = document.getElementById('syringeStatusText');
                 if (syringeOnline) {
                     syringeIndicator.style.background = '#28a745';
-                    syringeText.textContent = 'COM19（シリンジポンプ）: オンライン';
+                    syringeText.textContent = 'USB2（シリンジポンプ）: オンライン';
                 } else {
                     syringeIndicator.style.background = '#dc3545';
-                    syringeText.textContent = 'COM19（シリンジポンプ）: オフライン';
+                    syringeText.textContent = 'USB2（シリンジポンプ）: オフライン';
                 }
             } catch (e) {
                 console.error('状態確認に失敗しました', e);

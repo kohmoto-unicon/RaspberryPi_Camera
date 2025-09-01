@@ -267,6 +267,15 @@
                 <button class="btn btn-warning" onclick="restartCamera()">
                     🔧 カメラ再起動
                 </button>
+{#
+                <!-- 追加: カメラ解像度/FPS 設定 -->
+                <div style="display:flex; gap:8px; align-items:center;">
+                    <input id="camWidth" type="number" min="1" placeholder="幅" style="width:90px; padding:8px; border-radius:8px; border:1px solid #ccc;">
+                    <input id="camHeight" type="number" min="1" placeholder="高さ" style="width:90px; padding:8px; border-radius:8px; border:1px solid #ccc;">
+                    <input id="camFps" type="number" min="1" placeholder="FPS" style="width:80px; padding:8px; border-radius:8px; border:1px solid #ccc;">
+                    <button class="btn btn-primary" onclick="applyCameraSettings()">適用</button>
+                </div>
+#}
             </div>
 
             <div class="loading" id="loading">
@@ -380,6 +389,53 @@
             }
         }
 
+        // カメラ設定取得
+        async function getCameraSettings() {
+            try {
+                const res = await fetch('/api/get_camera_settings');
+                const data = await res.json();
+                document.getElementById('camWidth').value = data.width || 640;
+                document.getElementById('camHeight').value = data.height || 480;
+                document.getElementById('camFps').value = data.fps || 30;
+            } catch (e) {
+                console.warn('カメラ設定取得失敗', e);
+            }
+        }
+
+        // カメラ設定適用
+        async function applyCameraSettings() {
+            const w = parseInt(document.getElementById('camWidth').value) || 640;
+            const h = parseInt(document.getElementById('camHeight').value) || 480;
+            const f = parseInt(document.getElementById('camFps').value) || 30;
+
+            if (f < 1 || w < 1 || h < 1) {
+                showError('無効な設定値です');
+                return;
+            }
+
+            showLoading(true);
+            try {
+                const res = await fetch(`/api/set_camera_settings`, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({width: w, height: h, fps: f})
+                });
+                const data = await res.json();
+                if (data.success) {
+                    alert(`設定を適用しました: ${data.width}x${data.height}@${data.fps}fps`);
+                    // ストリームをリロードしてサイズ反映を試みる
+                    const img = document.getElementById('videoStream');
+                    img.src = img.src.split('?')[0] + '?t=' + Date.now();
+                } else {
+                    showError('設定適用に失敗しました: ' + (data.message || '不明なエラー'));
+                }
+            } catch (e) {
+                showError('設定適用に失敗しました: ' + e.message);
+            } finally {
+                showLoading(false);
+            }
+        }
+
         // ローディング表示
         function showLoading(show) {
             const loading = document.getElementById('loading');
@@ -401,13 +457,14 @@
             }, 3000);
         }
 
-        // ページ読み込み時に状態確認
+        // ページ読み込み時に状態確認・設定取得
         document.addEventListener('DOMContentLoaded', function() {
             checkStatus();
+            getCameraSettings();
             
             // 30秒ごとに状態確認
             setInterval(checkStatus, 30000);
         });
     </script>
 </body>
-</html> 
+</html>

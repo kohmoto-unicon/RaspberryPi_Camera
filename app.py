@@ -54,6 +54,11 @@ frame_buffer = None
 frame_lock = threading.Lock()
 is_raspberry_pi = False
 
+# --- 追加: 動的設定用のグローバル変数 ---
+CAM_WIDTH = 640
+CAM_HEIGHT = 480
+CAM_FPS = 60
+
 # OS判定
 import platform
 IS_WINDOWS = platform.system() == "Windows"
@@ -229,12 +234,20 @@ def initialize_camera():
             # カメラ設定
             print("カメラ設定を作成中...")
             config = camera.create_preview_configuration(
-                main={"size": (640, 480)},
+                main={"size": (CAM_WIDTH, CAM_HEIGHT), "format": "RGB888"},
                 encode="main",
                 buffer_count=4  # バッファ数を増やす
             )
             print("カメラ設定を適用中...")
             camera.configure(config)
+
+            # --- 追加: Picamera2 にフレームレートを明示設定 ---
+            try:
+                camera.set_controls({"FrameRate": CAM_FPS})
+                print(f"FrameRate を {CAM_FPS}fps に設定しました")
+            except Exception as e:
+                print(f"FrameRate 設定に失敗しました: {e}")
+
             print("カメラを起動中...")
             camera.start()
             
@@ -277,10 +290,17 @@ def initialize_camera():
                     
                     if camera.isOpened():
                         # カメラ設定
-                        camera.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-                        camera.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
-                        camera.set(cv2.CAP_PROP_FPS, 30)
+                        camera.set(cv2.CAP_PROP_FRAME_WIDTH, CAM_WIDTH)
+                        camera.set(cv2.CAP_PROP_FRAME_HEIGHT, CAM_HEIGHT)
+                        camera.set(cv2.CAP_PROP_FPS, CAM_FPS)
                         
+                        # --- 追加: 要求したFPSが反映されたかログ出力 ---
+                        try:
+                            actual_fps = camera.get(cv2.CAP_PROP_FPS)
+                            print(f"要求FPS={CAM_FPS} -> 実際FPS={actual_fps}")
+                        except Exception as e:
+                            print(f"OpenCV FPS確認エラー: {e}")
+
                         # テストフレームを取得して動作確認
                         ret, test_frame = camera.read()
                         if ret and test_frame is not None:
@@ -377,7 +397,7 @@ def generate_frames():
                 
                 if ret:
                     frame_count += 1
-                    if frame_count % 100 == 0:  # 100フレームごとにログ出力
+                    if frame_count % 1000 == 0:  # 100フレームごとにログ出力
                         print(f"ストリーミング中: {frame_count}フレーム送信完了")
                     
                     # MJPEGストリーミング用のヘッダー付きでフレームを返す
@@ -391,8 +411,8 @@ def generate_frames():
                 if error_count % 10 == 0:  # 10エラーごとにログ出力
                     print(f"フレーム取得エラー: {error_count}回目")
             
-            # フレームレート制御（30FPS）
-            time.sleep(1/30)
+            # フレームレート制御（CAM_FPS）
+            time.sleep(1.0 / max(1, CAM_FPS))
             
         except Exception as e:
             print(f"ストリーミング生成エラー: {e}")
@@ -861,6 +881,78 @@ def api_syringe_pump_control():
             'success': False,
             'message': f'エラーが発生しました: {str(e)}'
         })
+
+# --- 追加: カメラ設定を適用する関数と API エンドポイント ---
+def apply_camera_settings():
+    """現在の CAM_* 設定をカメラに適用"""
+    global camera, is_raspberry_pi, PICAMERA_AVAILABLE
+    try:
+        if camera is None:
+            print("apply_camera_settings: カメラ未初期化")
+            return False
+        if is_raspberry_pi and PICAMERA_AVAILABLE:
+            print(f"Picamera2 に設定を適用: {CAM_WIDTH}x{CAM_HEIGHT}@{CAM_FPS}fps")
+            try:
+                # 再設定は一度停止して configure -> start
+                camera.stop()
+            except Exception:
+                pass
+            config = camera.create_preview_configuration(
+                main={"size": (CAM_WIDTH, CAM_HEIGHT), "format": "RGB888"},
+                buffer_count=4
+            )
+            camera.configure(config)
+            try:
+                camera.set_controls({"FrameRate": CAM_FPS})
+            except Exception as e:
+                print(f"FrameRate設定エラー: {e}")
+            camera.start()
+        else:
+            print(f"OpenCV カメラに設定を適用: {CAM_WIDTH}x{CAM_HEIGHT}@{CAM_FPS}fps")
+            try:
+                camera.set(cv2.CAP_PROP_FRAME_WIDTH, CAM_WIDTH)
+                camera.set(cv2.CAP_PROP_FRAME_HEIGHT, CAM_HEIGHT)
+                camera.set(cv2.CAP_PROP_FPS, CAM_FPS)
+            except Exception as e:
+                print(f"OpenCV設定エラー: {e}")
+        return True
+    except Exception as e:
+        print(f"apply_camera_settings エラー: {e}")
+        return False
+
+@app.route('/api/get_camera_settings')
+def api_get_camera_settings():
+    return jsonify({
+        'width': CAM_WIDTH,
+        'height': CAM_HEIGHT,
+        'fps': CAM_FPS,
+        'camera_initialized': camera_initialized
+    })
+
+@app.route('/api/set_camera_settings')
+def api_set_camera_settings():
+    """例: /api/set_camera_settings?width=1280&height=720&fps=15"""
+    global CAM_WIDTH, CAM_HEIGHT, CAM_FPS
+    w = request.args.get('width')
+    h = request.args.get('height')
+    f = request.args.get('fps')
+    try:
+        if w is not None:
+            CAM_WIDTH = int(w)
+        if h is not None:
+            CAM_HEIGHT = int(h)
+        if f is not None:
+            CAM_FPS = int(f)
+    except ValueError:
+        return jsonify({'success': False, 'message': '無効なパラメータ'}), 400
+
+    success = apply_camera_settings()
+    return jsonify({
+        'success': success,
+        'width': CAM_WIDTH,
+        'height': CAM_HEIGHT,
+        'fps': CAM_FPS
+    })
 
 if __name__ == '__main__':
     import argparse
