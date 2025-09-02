@@ -55,6 +55,12 @@
         
         .btn-status { background: linear-gradient(135deg, #6f42c1 0%, #5a2d91 100%); color: #fff; }
         .btn-status:hover { transform: translateY(-2px); box-shadow: 0 8px 20px rgba(111, 66, 193, 0.4); }
+        
+        .btn-valve-in { background: linear-gradient(135deg, #ffc107 0%, #e0a800 100%); color: #fff; }
+        .btn-valve-in:hover { transform: translateY(-2px); box-shadow: 0 8px 20px rgba(255, 193, 7, 0.4); }
+        
+        .btn-valve-out { background: linear-gradient(135deg, #fd7e14 0%, #e55a00 100%); color: #fff; }
+        .btn-valve-out:hover { transform: translateY(-2px); box-shadow: 0 8px 20px rgba(253, 126, 20, 0.4); }
         .pump-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px; margin-top: 20px; }
         .pump-box { border: 2px solid #e0e0e0; padding: 20px; border-radius: 15px; background: #fff; box-shadow: 0 5px 15px rgba(0,0,0,0.1); transition: all 0.3s ease; }
         .pump-box:hover { transform: translateY(-5px); box-shadow: 0 10px 25px rgba(0,0,0,0.15); }
@@ -96,10 +102,10 @@
                 const syringeText = document.getElementById('syringeStatusText');
                 if (syringeOnline) {
                     syringeIndicator.style.background = '#28a745';
-                    syringeText.textContent = 'USB2（シリンジポンプ）: オンライン';
+                    syringeText.textContent = 'USB0（シリンジポンプ）: オンライン';
                 } else {
                     syringeIndicator.style.background = '#dc3545';
-                    syringeText.textContent = 'USB2（シリンジポンプ）: オフライン';
+                    syringeText.textContent = 'USB0（シリンジポンプ）: オフライン';
                 }
             } catch (e) {
                 console.error('状態確認に失敗しました', e);
@@ -399,6 +405,70 @@
                         }
                     });
                 }
+                
+                // バルブINボタン
+                const valveInBtn = document.getElementById(`valveInBtn${pump}`);
+                if (valveInBtn) {
+                    valveInBtn.addEventListener('click', async () => {
+                        try {
+                            valveInBtn.disabled = true;
+                            valveInBtn.textContent = '送信中...';
+                            
+                            const address = document.getElementById(`addr${pump}`).value;
+                            const response = await fetch(`/api/syringe_pump_control?pump=${pump}&action=valve_in&address=${address}`);
+                            const data = await response.json();
+                            
+                            // 成否に関わらず、コマンド内容が返ってきたら表示
+                            if (data.command_bytes && data.command_bytes.length > 0) {
+                                const commandDisplay = document.getElementById(`commandDisplay${pump}`);
+                                if (commandDisplay) {
+                                    const commandBytes = new Uint8Array(data.command_bytes);
+                                    commandDisplay.value = formatCommandBytes(commandBytes);
+                                }
+                            }
+                            if (!data.success) {
+                                console.error(`バルブINコマンド送信失敗: ${data.message}`);
+                            }
+                        } catch (error) {
+                            console.error('バルブINコマンド送信中にエラーが発生しました:', error);
+                        } finally {
+                            valveInBtn.disabled = false;
+                            valveInBtn.textContent = 'バルブ IN';
+                        }
+                    });
+                }
+                
+                // バルブOUTボタン
+                const valveOutBtn = document.getElementById(`valveOutBtn${pump}`);
+                if (valveOutBtn) {
+                    valveOutBtn.addEventListener('click', async () => {
+                        try {
+                            valveOutBtn.disabled = true;
+                            valveOutBtn.textContent = '送信中...';
+                            
+                            const address = document.getElementById(`addr${pump}`).value;
+                            const response = await fetch(`/api/syringe_pump_control?pump=${pump}&action=valve_out&address=${address}`);
+                            const data = await response.json();
+                            
+                            // 成否に関わらず、コマンド内容が返ってきたら表示
+                            if (data.command_bytes && data.command_bytes.length > 0) {
+                                const commandDisplay = document.getElementById(`commandDisplay${pump}`);
+                                if (commandDisplay) {
+                                    const commandBytes = new Uint8Array(data.command_bytes);
+                                    commandDisplay.value = formatCommandBytes(commandBytes);
+                                }
+                            }
+                            if (!data.success) {
+                                console.error(`バルブOUTコマンド送信失敗: ${data.message}`);
+                            }
+                        } catch (error) {
+                            console.error('バルブOUTコマンド送信中にエラーが発生しました:', error);
+                        } finally {
+                            valveOutBtn.disabled = false;
+                            valveOutBtn.textContent = 'バルブ OUT';
+                        }
+                    });
+                }
             }
         });
     </script>
@@ -497,6 +567,14 @@
                         <div class="input-group">
                             <button type="button" class="btn btn-stop" id="stopBtn{{ pump }}" data-pump="{{ pump }}">停止</button>
                             <button type="button" class="btn btn-status" id="statusBtn{{ pump }}" data-pump="{{ pump }}">ステータス</button>
+                        </div>
+                    </div>
+                    
+                    <div class="control-group">
+                        <label>バルブ制御</label>
+                        <div class="input-group">
+                            <button type="button" class="btn btn-valve-in" id="valveInBtn{{ pump }}" data-pump="{{ pump }}">バルブ IN</button>
+                            <button type="button" class="btn btn-valve-out" id="valveOutBtn{{ pump }}" data-pump="{{ pump }}">バルブ OUT</button>
                         </div>
                     </div>
                     

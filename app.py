@@ -97,7 +97,7 @@ serial_initialized2 = False # ポンプ4-6用シリアル通信初期化フラ�
 if IS_WINDOWS:
     SYRINGE_SERIAL_PORT = "COM22"  # Windows環境の場合（シリンジポンプ）
 else:
-    SYRINGE_SERIAL_PORT = "/dev/ttyACM2"  # Linux/Raspberry Pi環境の場合（シリンジポンプ）
+    SYRINGE_SERIAL_PORT = "/dev/ttyUSB0"  # Linux/Raspberry Pi環境の場合（シリンジポンプ）
 
 SYRINGE_BAUD_RATE = 9600
 ser_syringe = None
@@ -1165,12 +1165,18 @@ def api_syringe_pump_control():
             down_steps = request.args.get("downSteps", "3000")
             up_steps = request.args.get("steps", "3000")
             loop_count = request.args.get("loopCount", "0")
-            loop_command = f"P{down_steps}D{up_steps}G{loop_count}R"
+            loop_command = f"IP{down_steps}OD{up_steps}G{loop_count}R"
             success, command_bytes = controller.send_command(loop_command, selected_address)
             message = f"ループコマンド送信完了（下:{down_steps}、上:{up_steps}、ループ:{loop_count}）" if success else "ループコマンド送信失敗"
         elif action == "qr":
             success, command_bytes = controller.send_command("QR", selected_address)
             message = "ステータス確認コマンド送信完了" if success else "ステータス確認コマンド送信失敗"
+        elif action == "valve_in":
+            success, command_bytes = controller.send_command("IR", selected_address)
+            message = "バルブINコマンド送信完了" if success else "バルブINコマンド送信失敗"
+        elif action == "valve_out":
+            success, command_bytes = controller.send_command("OR", selected_address)
+            message = "バルブOUTコマンド送信完了" if success else "バルブOUTコマンド送信失敗"
         else:
             return jsonify({
                 'success': False,
@@ -1326,7 +1332,7 @@ if __name__ == '__main__':
     # OSに応じたデフォルトポート設定
     default_port_1 = 'COM18' if IS_WINDOWS else '/dev/ttyACM0'
     default_port_2 = 'COM20' if IS_WINDOWS else '/dev/ttyACM1'
-    default_syringe_port = 'COM19' if IS_WINDOWS else '/dev/ttyACM2'
+    default_syringe_port = 'COM19' if IS_WINDOWS else '/dev/ttyUSB0'
     
     parser.add_argument('--serial-port-1', type=str, default=default_port_1, 
                        help=f'ハイセラポンプ1-3用シリアルポート（デフォルト: {default_port_1}）')
