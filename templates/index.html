@@ -546,6 +546,20 @@
             }
         }
 
+        // デバイス検出
+        function isSafari() {
+            const ua = navigator.userAgent;
+            return /Safari/.test(ua) && !/Chrome/.test(ua);
+        }
+        
+        function isMobile() {
+            return /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+        }
+        
+        function isIOS() {
+            return /iPad|iPhone|iPod/.test(navigator.userAgent);
+        }
+
         // HLSストリーミングに切り替え
         async function switchToHLS() {
             const ffmpegStatus = await checkFFmpegStatus();
@@ -553,6 +567,14 @@
             if (!ffmpegStatus || !ffmpegStatus.ffmpeg_running) {
                 showError('FFmpegストリーミングが実行されていません。まずFFmpegを開始してください。');
                 return;
+            }
+            
+            // Safari/iOSの場合は特別な処理
+            if (isSafari() || isIOS()) {
+                if (confirm('Safari/iOSではHLSストリーミングが制限される場合があります。\nMJPEGストリーミングを使用しますか？')) {
+                    switchToMJPEG();
+                    return;
+                }
             }
             
             const mjpegElement = document.getElementById('videoStreamMjpeg');
@@ -568,6 +590,16 @@
             const source = hlsElement.querySelector('source');
             source.src = '/video_feed_hls';
             hlsElement.load();
+            
+            // Safari/iOSの場合は自動再生を試行
+            if (isSafari() || isIOS()) {
+                try {
+                    await hlsElement.play();
+                } catch (error) {
+                    console.warn('Safari/iOSでの自動再生に失敗:', error);
+                    showError('Safari/iOSでは手動で再生ボタンを押してください。');
+                }
+            }
             
             alert('HLSストリーミングに切り替えました');
         }
@@ -591,6 +623,12 @@
             checkStatus();
             getCameraSettings();
             checkFFmpegStatus();
+            
+            // デバイス検出とメッセージ表示
+            if (isSafari() || isIOS()) {
+                console.log('Safari/iOSデバイスを検出しました');
+                showError('Safari/iOSではMJPEGストリーミングを推奨します。HLSストリーミングは制限される場合があります。');
+            }
             
             // 30秒ごとに状態確認
             setInterval(checkStatus, 30000);

@@ -11,6 +11,7 @@ import subprocess
 import tempfile
 import shutil
 from flask import Flask, render_template, Response, jsonify, request, send_file
+from flask_cors import CORS
 import cv2
 import io
 import serial
@@ -48,6 +49,12 @@ except ImportError:
             print(f"ビデオデバイス確認エラー: {e}")
 
 app = Flask(__name__)
+# CORSを有効化（モバイルデバイス対応）
+CORS(app, resources={
+    r"/video_feed*": {"origins": "*"},
+    r"/hls_segment/*": {"origins": "*"},
+    r"/api/*": {"origins": "*"}
+})
 
 # カメラ設定
 camera = None
@@ -476,7 +483,7 @@ def setup_ffmpeg_streaming():
             # PCカメラの場合
             input_source = "0"  # OpenCVのデフォルトカメラID
         
-        # FFmpegコマンドを構築
+        # FFmpegコマンドを構築（Safari互換設定）
         ffmpeg_cmd = [
             'ffmpeg',
             '-f', 'v4l2' if is_raspberry_pi else 'dshow' if IS_WINDOWS else 'v4l2',
@@ -484,22 +491,26 @@ def setup_ffmpeg_streaming():
             '-c:v', 'libx264',
             '-preset', 'ultrafast',
             '-tune', 'zerolatency',
+            '-profile:v', 'baseline',  # Safari互換のためbaselineプロファイルを使用
+            '-level', '3.0',           # Safari互換のレベル
+            '-pix_fmt', 'yuv420p',     # Safari互換のピクセルフォーマット
             '-crf', '23',
             '-maxrate', '2M',
             '-bufsize', '4M',
-            '-g', str(CAM_FPS * 2),  # GOP size
+            '-g', str(CAM_FPS * 2),    # GOP size
             '-keyint_min', str(CAM_FPS),
             '-sc_threshold', '0',
             '-f', 'hls',
             '-hls_time', str(hls_segment_duration),
             '-hls_list_size', str(hls_playlist_size),
-            '-hls_flags', 'delete_segments',
+            '-hls_flags', 'delete_segments+independent_segments',  # Safari互換フラグ
             '-hls_allow_cache', '0',
+            '-hls_segment_type', 'mpegts',  # 明示的にMPEG-TSを指定
             '-hls_segment_filename', os.path.join(ffmpeg_temp_dir, 'segment_%03d.ts'),
             os.path.join(ffmpeg_temp_dir, 'playlist.m3u8')
         ]
         
-        # Windowsの場合はdshowを使用
+        # Windowsの場合はdshowを使用（Safari互換設定）
         if IS_WINDOWS:
             ffmpeg_cmd = [
                 'ffmpeg',
@@ -508,6 +519,9 @@ def setup_ffmpeg_streaming():
                 '-c:v', 'libx264',
                 '-preset', 'ultrafast',
                 '-tune', 'zerolatency',
+                '-profile:v', 'baseline',  # Safari互換のためbaselineプロファイルを使用
+                '-level', '3.0',           # Safari互換のレベル
+                '-pix_fmt', 'yuv420p',     # Safari互換のピクセルフォーマット
                 '-crf', '23',
                 '-maxrate', '2M',
                 '-bufsize', '4M',
@@ -517,8 +531,9 @@ def setup_ffmpeg_streaming():
                 '-f', 'hls',
                 '-hls_time', str(hls_segment_duration),
                 '-hls_list_size', str(hls_playlist_size),
-                '-hls_flags', 'delete_segments',
+                '-hls_flags', 'delete_segments+independent_segments',  # Safari互換フラグ
                 '-hls_allow_cache', '0',
+                '-hls_segment_type', 'mpegts',  # 明示的にMPEG-TSを指定
                 '-hls_segment_filename', os.path.join(ffmpeg_temp_dir, 'segment_%03d.ts'),
                 os.path.join(ffmpeg_temp_dir, 'playlist.m3u8')
             ]
@@ -604,8 +619,16 @@ def syringe_pump():
 @app.route('/video_feed')
 def video_feed():
     """ビデオストリーミングエンドポイント（MJPEG - 後方互換性のため保持）"""
-    return Response(generate_frames(),
-                    mimetype='multipart/x-mixed-replace; boundary=frame')
+    response = Response(generate_frames(),
+                       mimetype='multipart/x-mixed-replace; boundary=frame')
+    # モバイルデバイス互換のためのCORSヘッダーを追加
+    response.headers['Access-Control-Allow-Origin'] = '*'
+    response.headers['Access-Control-Allow-Methods'] = 'GET, OPTIONS'
+    response.headers['Access-Control-Allow-Headers'] = 'Content-Type'
+    response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+    response.headers['Pragma'] = 'no-cache'
+    response.headers['Expires'] = '0'
+    return response
 
 @app.route('/video_feed_hls')
 def video_feed_hls():
@@ -619,7 +642,15 @@ def video_feed_hls():
     
     if os.path.exists(playlist_path):
         try:
-            return send_file(playlist_path, mimetype='application/vnd.apple.mpegurl')
+            response = send_file(playlist_path, mimetype='application/vnd.apple.mpegurl')
+            # Safari互換のためのCORSヘッダーを追加
+            response.headers['Access-Control-Allow-Origin'] = '*'
+            response.headers['Access-Control-Allow-Methods'] = 'GET, OPTIONS'
+            response.headers['Access-Control-Allow-Headers'] = 'Content-Type'
+            response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+            response.headers['Pragma'] = 'no-cache'
+            response.headers['Expires'] = '0'
+            return response
         except Exception as e:
             print(f"HLSプレイリスト送信エラー: {e}")
             return jsonify({'error': 'プレイリストの送信に失敗しました'}), 500
@@ -638,7 +669,15 @@ def hls_segment(segment_name):
     
     if os.path.exists(segment_path):
         try:
-            return send_file(segment_path, mimetype='video/mp2t')
+            response = send_file(segment_path, mimetype='video/mp2t')
+            # Safari互換のためのCORSヘッダーを追加
+            response.headers['Access-Control-Allow-Origin'] = '*'
+            response.headers['Access-Control-Allow-Methods'] = 'GET, OPTIONS'
+            response.headers['Access-Control-Allow-Headers'] = 'Content-Type'
+            response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+            response.headers['Pragma'] = 'no-cache'
+            response.headers['Expires'] = '0'
+            return response
         except Exception as e:
             print(f"HLSセグメント送信エラー: {e}")
             return jsonify({'error': 'セグメントの送信に失敗しました'}), 500
