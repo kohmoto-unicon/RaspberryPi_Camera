@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Raspberry Pi Camera Streaming</title>
+    <title>ラズパイカメラストリーミング</title>
     <style>
         * {
             margin: 0;
@@ -233,19 +233,19 @@
 <body>
     <div class="container">
         <div class="header">
-            <h1>ラズパイカメラストリーミング</h1>
+            <h1>📹 ラズパイカメラストリーミング</h1>
             <p>リアルタイムカメラフィードとコントロール</p>
         </div>
 
         <div class="content">
             <div class="nav-links">
-                <a href="/">カメラストリーミング</a>
-                <a href="/pump_control">ハイセラポンプ</a>
-                <a href="/syringe_pump">シリンジポンプ</a>
+                <a href="/">📹 カメラストリーミング</a>
+                <a href="/pump_control">🔧 ハイセラポンプ</a>
+                <a href="/syringe_pump">💉 シリンジポンプ</a>
             </div>
 
             <div class="status">
-                <h3>システム状態</h3>
+                <h3>📊 システム状態</h3>
                 <p>
                     <span class="status-indicator" id="cameraStatus"></span>
                     <span id="statusText">カメラ状態を確認中...</span>
@@ -271,10 +271,10 @@
                 </button>
 #}
                 <button class="btn btn-success" onclick="takeSnapshot()">
-                    スナップショット
+                    📸 スナップショット
                 </button>
                 <button class="btn btn-warning" onclick="restartCamera()">
-                    カメラ再起動
+                    🔧 カメラ再起動
                 </button>
 
 {#
@@ -310,7 +310,7 @@
                 <img id="snapshotImage" class="snapshot-image" alt="スナップショット">
                 <br>
                 <a id="downloadLink" class="btn btn-primary" download="snapshot.jpg">
-                    ダウンロード
+                    💾 ダウンロード
                 </a>
             </div>
         </div>
