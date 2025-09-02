@@ -6,3 +6,9 @@ pyserial==3.5
 
 # Piのときだけ入れる（Linuxかつarm系）
 picamera2==0.3.12; sys_platform == "linux" and (platform_machine == "aarch64" or platform_machine == "armv7l")
+
+# FFmpegストリーミング用（システムにFFmpegがインストールされている必要があります）
+# FFmpegのインストール方法:
+# Windows: https://ffmpeg.org/download.html からダウンロード
+# Linux: sudo apt install ffmpeg
+# macOS: brew install ffmpeg

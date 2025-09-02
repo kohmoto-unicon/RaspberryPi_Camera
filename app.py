@@ -7,7 +7,10 @@
 import os
 import time
 import threading
-from flask import Flask, render_template, Response, jsonify, request
+import subprocess
+import tempfile
+import shutil
+from flask import Flask, render_template, Response, jsonify, request, send_file
 import cv2
 import io
 import serial
@@ -53,6 +56,12 @@ stream_thread = None
 frame_buffer = None
 frame_lock = threading.Lock()
 is_raspberry_pi = False
+
+# FFmpegストリーミング設定
+ffmpeg_process = None
+ffmpeg_temp_dir = None
+hls_segment_duration = 2  # HLSセグメントの長さ（秒）
+hls_playlist_size = 3     # プレイリストに保持するセグメント数
 
 # --- 追加: 動的設定用のグローバル変数 ---
 CAM_WIDTH = 640
@@ -446,6 +455,137 @@ def generate_frames():
             error_count += 1
             time.sleep(1)
 
+def setup_ffmpeg_streaming():
+    """FFmpegストリーミングのセットアップ"""
+    global ffmpeg_process, ffmpeg_temp_dir, camera_initialized, is_raspberry_pi
+    
+    if not camera_initialized:
+        print("カメラが初期化されていません")
+        return False
+    
+    try:
+        # 一時ディレクトリを作成
+        ffmpeg_temp_dir = tempfile.mkdtemp(prefix='ffmpeg_stream_')
+        print(f"FFmpeg一時ディレクトリを作成: {ffmpeg_temp_dir}")
+        
+        # カメラ入力ソースを決定
+        if is_raspberry_pi and PICAMERA_AVAILABLE:
+            # ラズパイカメラの場合
+            input_source = "/dev/video0"  # ラズパイカメラのデフォルトデバイス
+        else:
+            # PCカメラの場合
+            input_source = "0"  # OpenCVのデフォルトカメラID
+        
+        # FFmpegコマンドを構築
+        ffmpeg_cmd = [
+            'ffmpeg',
+            '-f', 'v4l2' if is_raspberry_pi else 'dshow' if IS_WINDOWS else 'v4l2',
+            '-i', input_source,
+            '-c:v', 'libx264',
+            '-preset', 'ultrafast',
+            '-tune', 'zerolatency',
+            '-crf', '23',
+            '-maxrate', '2M',
+            '-bufsize', '4M',
+            '-g', str(CAM_FPS * 2),  # GOP size
+            '-keyint_min', str(CAM_FPS),
+            '-sc_threshold', '0',
+            '-f', 'hls',
+            '-hls_time', str(hls_segment_duration),
+            '-hls_list_size', str(hls_playlist_size),
+            '-hls_flags', 'delete_segments',
+            '-hls_allow_cache', '0',
+            '-hls_segment_filename', os.path.join(ffmpeg_temp_dir, 'segment_%03d.ts'),
+            os.path.join(ffmpeg_temp_dir, 'playlist.m3u8')
+        ]
+        
+        # Windowsの場合はdshowを使用
+        if IS_WINDOWS:
+            ffmpeg_cmd = [
+                'ffmpeg',
+                '-f', 'dshow',
+                '-i', f'video={input_source}',
+                '-c:v', 'libx264',
+                '-preset', 'ultrafast',
+                '-tune', 'zerolatency',
+                '-crf', '23',
+                '-maxrate', '2M',
+                '-bufsize', '4M',
+                '-g', str(CAM_FPS * 2),
+                '-keyint_min', str(CAM_FPS),
+                '-sc_threshold', '0',
+                '-f', 'hls',
+                '-hls_time', str(hls_segment_duration),
+                '-hls_list_size', str(hls_playlist_size),
+                '-hls_flags', 'delete_segments',
+                '-hls_allow_cache', '0',
+                '-hls_segment_filename', os.path.join(ffmpeg_temp_dir, 'segment_%03d.ts'),
+                os.path.join(ffmpeg_temp_dir, 'playlist.m3u8')
+            ]
+        
+        print(f"FFmpegコマンド: {' '.join(ffmpeg_cmd)}")
+        
+        # FFmpegプロセスを開始
+        ffmpeg_process = subprocess.Popen(
+            ffmpeg_cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            cwd=ffmpeg_temp_dir
+        )
+        
+        # プロセスが正常に開始されたか確認
+        time.sleep(2)  # プロセス開始を待機
+        if ffmpeg_process.poll() is None:
+            print("FFmpegストリーミングプロセスが正常に開始されました")
+            return True
+        else:
+            stdout, stderr = ffmpeg_process.communicate()
+            print(f"FFmpegプロセス開始エラー: {stderr.decode()}")
+            return False
+            
+    except Exception as e:
+        print(f"FFmpegストリーミングセットアップエラー: {e}")
+        return False
+
+def cleanup_ffmpeg_streaming():
+    """FFmpegストリーミングのクリーンアップ"""
+    global ffmpeg_process, ffmpeg_temp_dir
+    
+    try:
+        if ffmpeg_process:
+            print("FFmpegプロセスを終了中...")
+            ffmpeg_process.terminate()
+            ffmpeg_process.wait(timeout=5)
+            ffmpeg_process = None
+        
+        if ffmpeg_temp_dir and os.path.exists(ffmpeg_temp_dir):
+            print(f"一時ディレクトリを削除中: {ffmpeg_temp_dir}")
+            shutil.rmtree(ffmpeg_temp_dir)
+            ffmpeg_temp_dir = None
+            
+    except Exception as e:
+        print(f"FFmpegクリーンアップエラー: {e}")
+
+def generate_hls_stream():
+    """HLSストリーミング用のプレイリスト生成"""
+    global ffmpeg_temp_dir
+    
+    if not ffmpeg_temp_dir or not os.path.exists(ffmpeg_temp_dir):
+        return None
+    
+    playlist_path = os.path.join(ffmpeg_temp_dir, 'playlist.m3u8')
+    
+    if os.path.exists(playlist_path):
+        try:
+            with open(playlist_path, 'r') as f:
+                content = f.read()
+            return content
+        except Exception as e:
+            print(f"プレイリスト読み込みエラー: {e}")
+            return None
+    
+    return None
+
 @app.route('/')
 def index():
     """メインページ"""
@@ -463,9 +603,47 @@ def syringe_pump():
 
 @app.route('/video_feed')
 def video_feed():
-    """ビデオストリーミングエンドポイント"""
+    """ビデオストリーミングエンドポイント（MJPEG - 後方互換性のため保持）"""
     return Response(generate_frames(),
                     mimetype='multipart/x-mixed-replace; boundary=frame')
+
+@app.route('/video_feed_hls')
+def video_feed_hls():
+    """HLSストリーミングエンドポイント（FFmpeg使用）"""
+    global ffmpeg_temp_dir
+    
+    if not ffmpeg_temp_dir or not os.path.exists(ffmpeg_temp_dir):
+        return jsonify({'error': 'FFmpegストリーミングが開始されていません'}), 503
+    
+    playlist_path = os.path.join(ffmpeg_temp_dir, 'playlist.m3u8')
+    
+    if os.path.exists(playlist_path):
+        try:
+            return send_file(playlist_path, mimetype='application/vnd.apple.mpegurl')
+        except Exception as e:
+            print(f"HLSプレイリスト送信エラー: {e}")
+            return jsonify({'error': 'プレイリストの送信に失敗しました'}), 500
+    else:
+        return jsonify({'error': 'プレイリストファイルが見つかりません'}), 404
+
+@app.route('/hls_segment/<segment_name>')
+def hls_segment(segment_name):
+    """HLSセグメントファイルの配信"""
+    global ffmpeg_temp_dir
+    
+    if not ffmpeg_temp_dir or not os.path.exists(ffmpeg_temp_dir):
+        return jsonify({'error': 'FFmpegストリーミングが開始されていません'}), 503
+    
+    segment_path = os.path.join(ffmpeg_temp_dir, segment_name)
+    
+    if os.path.exists(segment_path):
+        try:
+            return send_file(segment_path, mimetype='video/mp2t')
+        except Exception as e:
+            print(f"HLSセグメント送信エラー: {e}")
+            return jsonify({'error': 'セグメントの送信に失敗しました'}), 500
+    else:
+        return jsonify({'error': 'セグメントファイルが見つかりません'}), 404
 
 @app.route('/api/status')
 def api_status():
@@ -567,6 +745,71 @@ def api_restart_camera():
             'success': False,
             'message': f'エラー: {str(e)}'
         }), 500
+
+@app.route('/api/start_ffmpeg_streaming')
+def api_start_ffmpeg_streaming():
+    """FFmpegストリーミング開始API"""
+    global ffmpeg_process
+    
+    try:
+        if ffmpeg_process and ffmpeg_process.poll() is None:
+            return jsonify({
+                'success': False,
+                'message': 'FFmpegストリーミングは既に実行中です'
+            })
+        
+        success = setup_ffmpeg_streaming()
+        
+        if success:
+            return jsonify({
+                'success': True,
+                'message': 'FFmpegストリーミングを開始しました',
+                'hls_url': '/video_feed_hls'
+            })
+        else:
+            return jsonify({
+                'success': False,
+                'message': 'FFmpegストリーミングの開始に失敗しました'
+            })
+        
+    except Exception as e:
+        print(f"FFmpegストリーミング開始エラー: {e}")
+        return jsonify({
+            'success': False,
+            'message': f'エラー: {str(e)}'
+        }), 500
+
+@app.route('/api/stop_ffmpeg_streaming')
+def api_stop_ffmpeg_streaming():
+    """FFmpegストリーミング停止API"""
+    try:
+        cleanup_ffmpeg_streaming()
+        return jsonify({
+            'success': True,
+            'message': 'FFmpegストリーミングを停止しました'
+        })
+        
+    except Exception as e:
+        print(f"FFmpegストリーミング停止エラー: {e}")
+        return jsonify({
+            'success': False,
+            'message': f'エラー: {str(e)}'
+        }), 500
+
+@app.route('/api/ffmpeg_status')
+def api_ffmpeg_status():
+    """FFmpegストリーミング状態API"""
+    global ffmpeg_process, ffmpeg_temp_dir
+    
+    is_running = ffmpeg_process is not None and ffmpeg_process.poll() is None
+    temp_dir_exists = ffmpeg_temp_dir is not None and os.path.exists(ffmpeg_temp_dir)
+    
+    return jsonify({
+        'ffmpeg_running': is_running,
+        'temp_dir_exists': temp_dir_exists,
+        'temp_dir_path': ffmpeg_temp_dir if temp_dir_exists else None,
+        'hls_url': '/video_feed_hls' if is_running else None
+    })
 
 @app.route("/api/pump_control")
 def api_pump_control():
@@ -1015,12 +1258,32 @@ jpeg_output = None
 
 if __name__ == '__main__':
     import argparse
+    import atexit
+    import signal
+    
+    # クリーンアップ関数を登録
+    def cleanup_on_exit():
+        print("\nアプリケーション終了処理を開始します...")
+        cleanup_ffmpeg_streaming()
+        print("クリーンアップが完了しました")
+    
+    atexit.register(cleanup_on_exit)
+    
+    # シグナルハンドラーを登録（Ctrl+C等）
+    def signal_handler(signum, frame):
+        print(f"\nシグナル {signum} を受信しました。終了処理を開始します...")
+        cleanup_on_exit()
+        exit(0)
+    
+    signal.signal(signal.SIGINT, signal_handler)
+    signal.signal(signal.SIGTERM, signal_handler)
     
     # コマンドライン引数の解析
     parser = argparse.ArgumentParser(description='ラズパイカメラストリーミング + ポンプ制御Webサーバー')
     parser.add_argument('--debug', action='store_true', help='デバッグモードで起動')
     parser.add_argument('--port', type=int, default=5000, help='ポート番号（デフォルト: 5000）')
     parser.add_argument('--host', type=str, default='0.0.0.0', help='ホストアドレス（デフォルト: 0.0.0.0）')
+    parser.add_argument('--use-ffmpeg', action='store_true', help='FFmpegストリーミングを使用（デフォルト: MJPEG）')
     # OSに応じたデフォルトポート設定
     default_port_1 = 'COM18' if IS_WINDOWS else '/dev/ttyACM0'
     default_port_2 = 'COM20' if IS_WINDOWS else '/dev/ttyACM1'
@@ -1133,6 +1396,17 @@ if __name__ == '__main__':
         if not IS_WINDOWS:
             print("   → ラズパイでUSBデバイスが認識されているか確認してください")
             print("   → デバイス権限があるか確認してください")
+    
+    # FFmpegストリーミングの自動開始（オプション）
+    if args.use_ffmpeg and camera_success:
+        print("\nFFmpegストリーミングを自動開始します...")
+        ffmpeg_success = setup_ffmpeg_streaming()
+        if ffmpeg_success:
+            print("✓ FFmpegストリーミングが自動開始されました")
+            print(f"  HLS URL: http://localhost:{args.port}/video_feed_hls")
+        else:
+            print("✗ FFmpegストリーミングの自動開始に失敗しました")
+            print("  MJPEGストリーミングを使用します")
     
     # 開発サーバー起動（本番環境ではgunicorn等を使用）
     app.run(host=args.host, port=args.port, debug=args.debug, threaded=True)
