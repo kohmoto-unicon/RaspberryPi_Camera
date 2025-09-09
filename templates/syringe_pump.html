@@ -61,6 +61,141 @@
         
         .btn-valve-out { background: linear-gradient(135deg, #fd7e14 0%, #e55a00 100%); color: #fff; }
         .btn-valve-out:hover { transform: translateY(-2px); box-shadow: 0 8px 20px rgba(253, 126, 20, 0.4); }
+        
+        /* バルブ同期スイッチ用スタイル */
+        .valve-sync-container { 
+            display: flex; 
+            align-items: center; 
+            gap: 10px; 
+            margin-bottom: 15px; 
+            padding: 10px; 
+            background: #f8f9fa; 
+            border-radius: 8px; 
+            border: 1px solid #e9ecef; 
+        }
+        .valve-sync-label { 
+            font-weight: 600; 
+            color: #555; 
+            margin: 0; 
+        }
+        .valve-sync-switch { 
+            position: relative; 
+            display: inline-block; 
+            width: 60px; 
+            height: 34px; 
+        }
+        .valve-sync-switch input { 
+            opacity: 0; 
+            width: 0; 
+            height: 0; 
+        }
+        .valve-sync-slider { 
+            position: absolute; 
+            cursor: pointer; 
+            top: 0; 
+            left: 0; 
+            right: 0; 
+            bottom: 0; 
+            background-color: #ccc; 
+            transition: .4s; 
+            border-radius: 34px; 
+        }
+        .valve-sync-slider:before { 
+            position: absolute; 
+            content: ""; 
+            height: 26px; 
+            width: 26px; 
+            left: 4px; 
+            bottom: 4px; 
+            background-color: white; 
+            transition: .4s; 
+            border-radius: 50%; 
+        }
+        .valve-sync-switch input:checked + .valve-sync-slider { 
+            background-color: #28a745; 
+        }
+        .valve-sync-switch input:checked + .valve-sync-slider:before { 
+            transform: translateX(26px); 
+        }
+        .valve-sync-status { 
+            font-size: 14px; 
+            font-weight: 600; 
+            color: #666; 
+        }
+        
+        /* 位置指定用スタイル */
+        .position-control-container { 
+            display: flex; 
+            align-items: center; 
+            gap: 10px; 
+            margin-bottom: 15px; 
+            padding: 10px; 
+            background: #f0f8ff; 
+            border-radius: 8px; 
+            border: 1px solid #b3d9ff; 
+        }
+        .position-control-label { 
+            font-weight: 600; 
+            color: #555; 
+            margin: 0; 
+            min-width: 60px; 
+        }
+        .position-input { 
+            width: 80px; 
+            padding: 8px 10px; 
+            border: 2px solid #ddd; 
+            border-radius: 6px; 
+            font-size: 14px; 
+            text-align: center; 
+        }
+        .position-input:focus { 
+            outline: none; 
+            border-color: #4facfe; 
+        }
+        .btn-position-reset { 
+            background: linear-gradient(135deg, #6c757d 0%, #5a6268 100%); 
+            color: #fff; 
+            padding: 8px 16px; 
+            font-size: 14px; 
+        }
+        .btn-position-reset:hover { 
+            transform: translateY(-2px); 
+            box-shadow: 0 8px 20px rgba(108, 117, 125, 0.4); 
+        }
+        
+        /* 初速セット用スタイル */
+        .speed-control-container { 
+            display: flex; 
+            align-items: center; 
+            gap: 10px; 
+            margin-bottom: 15px; 
+            padding: 10px; 
+            background: #fff3cd; 
+            border-radius: 8px; 
+            border: 1px solid #ffeaa7; 
+        }
+        .speed-input { 
+            width: 80px; 
+            padding: 8px 10px; 
+            border: 2px solid #ddd; 
+            border-radius: 6px; 
+            font-size: 14px; 
+            text-align: center; 
+        }
+        .speed-input:focus { 
+            outline: none; 
+            border-color: #4facfe; 
+        }
+        .btn-speed-set { 
+            background: linear-gradient(135deg, #17a2b8 0%, #138496 100%); 
+            color: #fff; 
+            padding: 8px 16px; 
+            font-size: 14px; 
+        }
+        .btn-speed-set:hover { 
+            transform: translateY(-2px); 
+            box-shadow: 0 8px 20px rgba(23, 162, 184, 0.4); 
+        }
         .pump-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px; margin-top: 20px; }
         .pump-box { border: 2px solid #e0e0e0; padding: 20px; border-radius: 15px; background: #fff; box-shadow: 0 5px 15px rgba(0,0,0,0.1); transition: all 0.3s ease; }
         .pump-box:hover { transform: translateY(-5px); box-shadow: 0 10px 25px rgba(0,0,0,0.15); }
@@ -112,6 +247,9 @@
             }
         }
 
+        // バルブ同期状態を管理するオブジェクト
+        const valveSyncStates = {};
+
         document.addEventListener('DOMContentLoaded', () => {
             // 状態表示の定期更新
             checkStatus();
@@ -120,6 +258,8 @@
             // 6台分のアドレス初期化（1..6 をユニークに割当）＋ローカル保存
             const defaultAddresses = {1:1, 2:2, 3:3, 4:4, 5:5, 6:6};
             for (let pump = 1; pump <= 6; pump++) {
+                // バルブ同期状態の初期化（デフォルトはON）
+                valveSyncStates[pump] = true;
                 const select = document.getElementById(`addr${pump}`);
                 if (!select) continue;
                 const key = `syringe_addr_p${pump}`;
@@ -251,7 +391,8 @@
                             
                             const steps = document.getElementById(`steps${pump}`).value;
                             const address = document.getElementById(`addr${pump}`).value;
-                            const response = await fetch(`/api/syringe_pump_control?pump=${pump}&action=move_up&steps=${steps}&address=${address}`);
+                            const valveSync = valveSyncStates[pump];
+                            const response = await fetch(`/api/syringe_pump_control?pump=${pump}&action=move_up&steps=${steps}&address=${address}&valve_sync=${valveSync}`);
                             const data = await response.json();
                             
                             // 成否に関わらず、コマンド内容が返ってきたら表示
@@ -284,7 +425,8 @@
                             
                             const steps = document.getElementById(`downSteps${pump}`).value;
                             const address = document.getElementById(`addr${pump}`).value;
-                            const response = await fetch(`/api/syringe_pump_control?pump=${pump}&action=move_down&steps=${steps}&address=${address}`);
+                            const valveSync = valveSyncStates[pump];
+                            const response = await fetch(`/api/syringe_pump_control?pump=${pump}&action=move_down&steps=${steps}&address=${address}&valve_sync=${valveSync}`);
                             const data = await response.json();
                             
                             // 成否に関わらず、コマンド内容が返ってきたら表示
@@ -383,7 +525,8 @@
                             const downSteps = document.getElementById(`downSteps${pump}`).value;
                             const upSteps = document.getElementById(`steps${pump}`).value;
                             const address = document.getElementById(`addr${pump}`).value;
-                            const response = await fetch(`/api/syringe_pump_control?pump=${pump}&action=loop&loopCount=${loopCount}&downSteps=${downSteps}&steps=${upSteps}&address=${address}`);
+                            const valveSync = valveSyncStates[pump];
+                            const response = await fetch(`/api/syringe_pump_control?pump=${pump}&action=loop&loopCount=${loopCount}&downSteps=${downSteps}&steps=${upSteps}&address=${address}&valve_sync=${valveSync}`);
                             const data = await response.json();
                             
                             // 成否に関わらず、コマンド内容が返ってきたら表示
@@ -402,6 +545,155 @@
                         } finally {
                             loopBtn.disabled = false;
                             loopBtn.textContent = 'ループ';
+                        }
+                    });
+                }
+                
+                // バルブ同期スイッチ
+                const valveSyncSwitch = document.getElementById(`valveSyncSwitch${pump}`);
+                const valveSyncStatus = document.getElementById(`valveSyncStatus${pump}`);
+                if (valveSyncSwitch && valveSyncStatus) {
+                    // ローカルストレージから状態を復元（デフォルトはON）
+                    const savedSyncState = localStorage.getItem(`valveSync_${pump}`);
+                    if (savedSyncState === 'true' || savedSyncState === null) {
+                        valveSyncSwitch.checked = true;
+                        valveSyncStates[pump] = true;
+                        valveSyncStatus.textContent = 'ON';
+                        if (savedSyncState === null) {
+                            localStorage.setItem(`valveSync_${pump}`, 'true');
+                        }
+                    } else {
+                        valveSyncSwitch.checked = false;
+                        valveSyncStates[pump] = false;
+                        valveSyncStatus.textContent = 'OFF';
+                    }
+                    
+                    valveSyncSwitch.addEventListener('change', () => {
+                        valveSyncStates[pump] = valveSyncSwitch.checked;
+                        valveSyncStatus.textContent = valveSyncSwitch.checked ? 'ON' : 'OFF';
+                        localStorage.setItem(`valveSync_${pump}`, valveSyncSwitch.checked);
+                    });
+                }
+                
+                // 位置指定セレクトボックス
+                const positionSelect = document.getElementById(`positionSelect${pump}`);
+                if (positionSelect) {
+                    positionSelect.addEventListener('change', () => {
+                        if (positionSelect.value === 'custom') {
+                            const customValue = prompt('位置を入力してください:');
+                            if (customValue !== null && customValue.trim() !== '') {
+                                const numValue = parseInt(customValue);
+                                if (!isNaN(numValue) && numValue >= 0 && numValue <= 999999) {
+                                    // カスタム値を新しいoptionとして追加
+                                    const newOption = document.createElement('option');
+                                    newOption.value = customValue;
+                                    newOption.textContent = customValue;
+                                    positionSelect.insertBefore(newOption, positionSelect.lastElementChild);
+                                    positionSelect.value = customValue;
+                                } else {
+                                    alert('有効な数値を入力してください（0-999999の範囲）');
+                                    positionSelect.value = '0'; // デフォルト値に戻す
+                                }
+                            } else {
+                                positionSelect.value = '0'; // デフォルト値に戻す
+                            }
+                        }
+                    });
+                }
+                
+                // 位置リセットボタン
+                const positionResetBtn = document.getElementById(`positionResetBtn${pump}`);
+                if (positionResetBtn) {
+                    positionResetBtn.addEventListener('click', async () => {
+                        try {
+                            positionResetBtn.disabled = true;
+                            positionResetBtn.textContent = '送信中...';
+                            
+                            const position = positionSelect.value;
+                            const address = document.getElementById(`addr${pump}`).value;
+                            const valveSync = valveSyncStates[pump];
+                            const response = await fetch(`/api/syringe_pump_control?pump=${pump}&action=set_position&position=${position}&address=${address}&valve_sync=${valveSync}`);
+                            const data = await response.json();
+                            
+                            if (data.command_bytes && data.command_bytes.length > 0) {
+                                const commandDisplay = document.getElementById(`commandDisplay${pump}`);
+                                if (commandDisplay) {
+                                    const commandBytes = new Uint8Array(data.command_bytes);
+                                    commandDisplay.value = formatCommandBytes(commandBytes);
+                                }
+                            }
+                            if (!data.success) {
+                                console.error(`位置指定コマンド送信失敗: ${data.message}`);
+                            }
+                        } catch (error) {
+                            console.error('位置指定コマンド送信中にエラーが発生しました:', error);
+                        } finally {
+                            positionResetBtn.disabled = false;
+                            positionResetBtn.textContent = '位置リセット';
+                        }
+                    });
+                }
+                
+                // 初速セットセレクトボックス
+                const speedSelect = document.getElementById(`speedSelect${pump}`);
+                if (speedSelect) {
+                    speedSelect.addEventListener('change', () => {
+                        if (speedSelect.value === 'custom') {
+                            const customValue = prompt('初速を入力してください:');
+                            if (customValue !== null && customValue.trim() !== '') {
+                                const numValue = parseInt(customValue);
+                                if (!isNaN(numValue) && numValue >= 1 && numValue <= 9999) {
+                                    // カスタム値を新しいoptionとして追加
+                                    const newOption = document.createElement('option');
+                                    newOption.value = customValue;
+                                    newOption.textContent = customValue;
+                                    speedSelect.insertBefore(newOption, speedSelect.lastElementChild);
+                                    speedSelect.value = customValue;
+                                } else {
+                                    alert('有効な数値を入力してください（1-9999の範囲）');
+                                    speedSelect.value = '0'; // デフォルト値に戻す
+                                }
+                            } else {
+                                speedSelect.value = '0'; // デフォルト値に戻す
+                            }
+                        }
+                    });
+                }
+                
+                // 初速セットボタン
+                const speedSetBtn = document.getElementById(`speedSetBtn${pump}`);
+                if (speedSetBtn) {
+                    speedSetBtn.addEventListener('click', async () => {
+                        try {
+                            speedSetBtn.disabled = true;
+                            speedSetBtn.textContent = '送信中...';
+                            
+                            const speed = speedSelect.value;
+                            if (!speed || speed === '0' || isNaN(speed) || speed < 1 || speed > 9999) {
+                                alert('有効な初速値を選択してください（1-9999の範囲）');
+                                return;
+                            }
+                            
+                            const address = document.getElementById(`addr${pump}`).value;
+                            const valveSync = valveSyncStates[pump];
+                            const response = await fetch(`/api/syringe_pump_control?pump=${pump}&action=set_speed&speed=${speed}&address=${address}&valve_sync=${valveSync}`);
+                            const data = await response.json();
+                            
+                            if (data.command_bytes && data.command_bytes.length > 0) {
+                                const commandDisplay = document.getElementById(`commandDisplay${pump}`);
+                                if (commandDisplay) {
+                                    const commandBytes = new Uint8Array(data.command_bytes);
+                                    commandDisplay.value = formatCommandBytes(commandBytes);
+                                }
+                            }
+                            if (!data.success) {
+                                console.error(`初速セットコマンド送信失敗: ${data.message}`);
+                            }
+                        } catch (error) {
+                            console.error('初速セットコマンド送信中にエラーが発生しました:', error);
+                        } finally {
+                            speedSetBtn.disabled = false;
+                            speedSetBtn.textContent = '初速セット';
                         }
                     });
                 }
@@ -428,6 +720,20 @@
                             }
                             if (!data.success) {
                                 console.error(`バルブINコマンド送信失敗: ${data.message}`);
+                            }
+                            
+                            // バルブ同期がONの場合、他のポンプにもバルブINコマンドを送信
+                            if (valveSyncStates[pump]) {
+                                for (let otherPump = 1; otherPump <= 6; otherPump++) {
+                                    if (otherPump !== pump && valveSyncStates[otherPump]) {
+                                        try {
+                                            const otherAddress = document.getElementById(`addr${otherPump}`).value;
+                                            await fetch(`/api/syringe_pump_control?pump=${otherPump}&action=valve_in&address=${otherAddress}`);
+                                        } catch (syncError) {
+                                            console.error(`ポンプ${otherPump}の同期バルブINコマンド送信失敗:`, syncError);
+                                        }
+                                    }
+                                }
                             }
                         } catch (error) {
                             console.error('バルブINコマンド送信中にエラーが発生しました:', error);
@@ -460,6 +766,20 @@
                             }
                             if (!data.success) {
                                 console.error(`バルブOUTコマンド送信失敗: ${data.message}`);
+                            }
+                            
+                            // バルブ同期がONの場合、他のポンプにもバルブOUTコマンドを送信
+                            if (valveSyncStates[pump]) {
+                                for (let otherPump = 1; otherPump <= 6; otherPump++) {
+                                    if (otherPump !== pump && valveSyncStates[otherPump]) {
+                                        try {
+                                            const otherAddress = document.getElementById(`addr${otherPump}`).value;
+                                            await fetch(`/api/syringe_pump_control?pump=${otherPump}&action=valve_out&address=${otherAddress}`);
+                                        } catch (syncError) {
+                                            console.error(`ポンプ${otherPump}の同期バルブOUTコマンド送信失敗:`, syncError);
+                                        }
+                                    }
+                                }
                             }
                         } catch (error) {
                             console.error('バルブOUTコマンド送信中にエラーが発生しました:', error);
@@ -511,6 +831,26 @@
                         </select>
                         <button type="button" class="btn btn-initialize" id="initBtn{{ pump }}" data-pump="{{ pump }}">初期化</button>
                         </div>
+                    </div>
+                    
+                    <div class="position-control-container">
+                        <select id="positionSelect{{ pump }}" data-pump="{{ pump }}" style="width: 100px; padding: 10px 12px; border: 2px solid #ddd; border-radius: 8px; font-size: 14px;">
+                            <option value="0" selected>0</option>
+                            <option value="100">100</option>
+                            <option value="1000">1000</option>
+                            <option value="custom">カスタム入力...</option>
+                        </select>
+                        <button type="button" class="btn btn-position-reset" id="positionResetBtn{{ pump }}" data-pump="{{ pump }}">位置リセット</button>
+                    </div>
+                    
+                    <div class="speed-control-container">
+                        <select id="speedSelect{{ pump }}" data-pump="{{ pump }}" style="width: 100px; padding: 10px 12px; border: 2px solid #ddd; border-radius: 8px; font-size: 14px;">
+                            <option value="0" selected>0</option>
+                            <option value="100">100</option>
+                            <option value="1000">1000</option>
+                            <option value="custom">カスタム入力...</option>
+                        </select>
+                        <button type="button" class="btn btn-speed-set" id="speedSetBtn{{ pump }}" data-pump="{{ pump }}">初速セット</button>
                     </div>
                     
                     <div class="control-group">
@@ -568,6 +908,15 @@
                             <button type="button" class="btn btn-stop" id="stopBtn{{ pump }}" data-pump="{{ pump }}">停止</button>
                             <button type="button" class="btn btn-status" id="statusBtn{{ pump }}" data-pump="{{ pump }}">ステータス</button>
                         </div>
+                    </div>
+                    
+                    <div class="valve-sync-container">
+                        <label class="valve-sync-label">バルブ同期</label>
+                        <label class="valve-sync-switch">
+                            <input type="checkbox" id="valveSyncSwitch{{ pump }}" data-pump="{{ pump }}">
+                            <span class="valve-sync-slider"></span>
+                        </label>
+                        <span class="valve-sync-status" id="valveSyncStatus{{ pump }}">OFF</span>
                     </div>
                     
                     <div class="control-group">

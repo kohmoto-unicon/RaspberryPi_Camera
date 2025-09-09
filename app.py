@@ -417,13 +417,22 @@ def get_frame():
 
 def generate_frames():
     """MJPEGストリーミング用のフレーム生成（ハードウェアJPEGがあれば優先使用）"""
-    global jpeg_buffer, camera, camera_initialized, is_raspberry_pi
+    global jpeg_buffer, camera, camera_initialized, is_raspberry_pi, picam2
 
     frame_count = 0
     error_count = 0
 
     while True:
         try:
+            # カメラが初期化されていない場合は待機
+            if not camera_initialized:
+                time.sleep(0.1)
+                continue
+                
+            # picam2が停止されている場合は終了
+            if is_raspberry_pi and PICAMERA_AVAILABLE and picam2 is None:
+                print("カメラが停止されました。フレーム生成を終了します。")
+                break
             # ハードウェアエンコード経路（Picamera2 が有効でかつバッファがある場合）
             if is_raspberry_pi and PICAMERA_AVAILABLE and jpeg_buffer is not None:
                 jpeg_bytes = jpeg_buffer.get()
@@ -460,6 +469,17 @@ def generate_frames():
         except Exception as e:
             print(f"ストリーミング生成エラー: {e}")
             error_count += 1
+            
+            # カメラが停止されている場合は終了
+            if is_raspberry_pi and PICAMERA_AVAILABLE and picam2 is None:
+                print("カメラが停止されました。フレーム生成を終了します。")
+                break
+                
+            # エラーが多すぎる場合は終了
+            if error_count > 100:
+                print("エラーが多すぎます。フレーム生成を終了します。")
+                break
+                
             time.sleep(1)
 
 def setup_ffmpeg_streaming():
@@ -580,6 +600,60 @@ def cleanup_ffmpeg_streaming():
             
     except Exception as e:
         print(f"FFmpegクリーンアップエラー: {e}")
+
+def cleanup_camera():
+    """カメラのクリーンアップ"""
+    global picam2, jpeg_encoder, jpeg_output, jpeg_buffer
+    
+    try:
+        if picam2:
+            print("カメラを停止中...")
+            picam2.stop()
+            picam2.close()
+            picam2 = None
+            
+        if jpeg_encoder:
+            jpeg_encoder = None
+            
+        if jpeg_output:
+            jpeg_output = None
+            
+        if jpeg_buffer:
+            jpeg_buffer = None
+            
+        print("カメラのクリーンアップが完了しました")
+        
+    except Exception as e:
+        print(f"カメラクリーンアップエラー: {e}")
+
+def cleanup_serial_ports():
+    """シリアルポートのクリーンアップ"""
+    global ser_pump1, ser_pump2, ser_syringe, syringe_pump_controllers
+    
+    try:
+        if ser_pump1:
+            print("ハイセラポンプ1-3用シリアルポートを閉じ中...")
+            ser_pump1.close()
+            ser_pump1 = None
+            
+        if ser_pump2:
+            print("ハイセラポンプ4-6用シリアルポートを閉じ中...")
+            ser_pump2.close()
+            ser_pump2 = None
+            
+        if ser_syringe:
+            print("シリンジポンプ用シリアルポートを閉じ中...")
+            ser_syringe.close()
+            ser_syringe = None
+            
+        if syringe_pump_controllers:
+            print("シリンジポンプコントローラーをクリア中...")
+            syringe_pump_controllers.clear()
+            
+        print("シリアルポートのクリーンアップが完了しました")
+        
+    except Exception as e:
+        print(f"シリアルポートクリーンアップエラー: {e}")
 
 def generate_hls_stream():
     """HLSストリーミング用のプレイリスト生成"""
@@ -1148,15 +1222,22 @@ def api_syringe_pump_control():
         except ValueError:
             selected_address = 1
         
+        # バルブ同期状態を取得（デフォルトはON）
+        valve_sync = request.args.get("valve_sync", "true").lower() == "true"
+        
         if action == "initialize":
             success, command_bytes = controller.send_command("ZR", selected_address)
             message = "初期化コマンド送信完了" if success else "初期化コマンド送信失敗"
         elif action == "move_up":
-            success, command_bytes = controller.send_command(f"D{steps}R", selected_address)
-            message = f"上移動コマンド送信完了（{steps}ステップ）" if success else "上移動コマンド送信失敗"
+            # バルブ同期がONの場合はOを追加、OFFの場合は従来通り
+            command = f"OD{steps}R" if valve_sync else f"D{steps}R"
+            success, command_bytes = controller.send_command(command, selected_address)
+            message = f"上移動コマンド送信完了（{steps}ステップ、バルブ同期: {'ON' if valve_sync else 'OFF'}）" if success else "上移動コマンド送信失敗"
         elif action == "move_down":
-            success, command_bytes = controller.send_command(f"P{steps}R", selected_address)
-            message = f"下移動コマンド送信完了（{steps}ステップ）" if success else "下移動コマンド送信失敗"
+            # バルブ同期がONの場合はIを追加、OFFの場合は従来通り
+            command = f"IP{steps}R" if valve_sync else f"P{steps}R"
+            success, command_bytes = controller.send_command(command, selected_address)
+            message = f"下移動コマンド送信完了（{steps}ステップ、バルブ同期: {'ON' if valve_sync else 'OFF'}）" if success else "下移動コマンド送信失敗"
         elif action == "stop":
             success, command_bytes = controller.send_command("TR", selected_address)
             message = "停止コマンド送信完了" if success else "停止コマンド送信失敗"
@@ -1177,6 +1258,49 @@ def api_syringe_pump_control():
         elif action == "valve_out":
             success, command_bytes = controller.send_command("OR", selected_address)
             message = "バルブOUTコマンド送信完了" if success else "バルブOUTコマンド送信失敗"
+        elif action == "set_position":
+            position = request.args.get("position", "0")
+            try:
+                position = int(position)
+                if position < 0 or position > 999999:
+                    return jsonify({
+                        'success': False,
+                        'message': f'無効な位置値: {position}（0-999999の範囲で指定してください）'
+                    })
+            except ValueError:
+                return jsonify({
+                    'success': False,
+                    'message': f'無効な位置値: {position}（数値を入力してください）'
+                })
+            
+            # バルブ同期がONの場合はIを追加、OFFの場合は従来通り
+            command = f"IP{position}R" if valve_sync else f"P{position}R"
+            success, command_bytes = controller.send_command(command, selected_address)
+            message = f"位置指定コマンド送信完了（位置: {position}、バルブ同期: {'ON' if valve_sync else 'OFF'}）" if success else "位置指定コマンド送信失敗"
+        elif action == "reset_position":
+            # 位置リセットコマンド（通常は0に移動）
+            command = "IP0R" if valve_sync else "P0R"
+            success, command_bytes = controller.send_command(command, selected_address)
+            message = f"位置リセットコマンド送信完了（バルブ同期: {'ON' if valve_sync else 'OFF'}）" if success else "位置リセットコマンド送信失敗"
+        elif action == "set_speed":
+            speed = request.args.get("speed", "1000")
+            try:
+                speed = int(speed)
+                if speed < 1 or speed > 9999:
+                    return jsonify({
+                        'success': False,
+                        'message': f'無効な初速値: {speed}（1-9999の範囲で指定してください）'
+                    })
+            except ValueError:
+                return jsonify({
+                    'success': False,
+                    'message': f'無効な初速値: {speed}（数値を入力してください）'
+                })
+            
+            # 初速セットコマンド（S + 速度値 + R）
+            command = f"S{speed}R"
+            success, command_bytes = controller.send_command(command, selected_address)
+            message = f"初速セットコマンド送信完了（初速: {speed}）" if success else "初速セットコマンド送信失敗"
         else:
             return jsonify({
                 'success': False,
@@ -1309,6 +1433,8 @@ if __name__ == '__main__':
     # クリーンアップ関数を登録
     def cleanup_on_exit():
         print("\nアプリケーション終了処理を開始します...")
+        cleanup_camera()
+        cleanup_serial_ports()
         cleanup_ffmpeg_streaming()
         print("クリーンアップが完了しました")
     
