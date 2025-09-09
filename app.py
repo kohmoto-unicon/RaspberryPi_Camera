@@ -90,6 +90,9 @@ else:
 BAUD_RATE = 9600
 ser_1 = None  # ポンプ1-3用
 ser_2 = None  # ポンプ4-6用
+ser_pump1 = None  # ポンプ1-3用（クリーンアップ用）
+ser_pump2 = None  # ポンプ4-6用（クリーンアップ用）
+picam2 = None  # カメラインスタンス（クリーンアップ用）
 serial_initialized1 = False # ポンプ1-3用シリアル通信初期化フラグ
 serial_initialized2 = False # ポンプ4-6用シリアル通信初期化フラグ
 
@@ -106,7 +109,7 @@ syringe_pump_controllers = []  # シリンジポンプ制御インスタンス�
 
 def initialize_serial():
     """シリアル通信を初期化（ハイセラポンプ）"""
-    global ser_1, ser_2, serial_initialized_1, serial_initialized_2
+    global ser_1, ser_2, serial_initialized_1, serial_initialized_2, ser_pump1, ser_pump2
     
     print(f"OS: {platform.system()}")
     print(f"シリアルポート設定:")
@@ -117,6 +120,7 @@ def initialize_serial():
         # ポンプ1-3用ポートの初期化
         print(f"ポート {SERIAL_PORT_1} を開こうとしています...")
         ser_1 = serial.Serial(SERIAL_PORT_1, BAUD_RATE, timeout=1)
+        ser_pump1 = ser_1  # クリーンアップ用にser_pump1にも設定
         print(f"✓ ハイセラポンプ1-3用シリアル通信が正常に初期化されました: {SERIAL_PORT_1}")
         serial_initialized_1 = True
     except Exception as e:
@@ -130,6 +134,7 @@ def initialize_serial():
         # ポンプ4-6用ポートの初期化
         print(f"ポート {SERIAL_PORT_2} を開こうとしています...")
         ser_2 = serial.Serial(SERIAL_PORT_2, BAUD_RATE, timeout=1)
+        ser_pump2 = ser_2  # クリーンアップ用にser_pump2にも設定
         print(f"✓ ハイセラポンプ4-6用シリアル通信が正常に初期化されました: {SERIAL_PORT_2}")
         serial_initialized_2 = True
     except Exception as e:
@@ -219,7 +224,7 @@ def send_serial_command(pump_no, action, value="000000"):
 def initialize_camera():
     try:
         # jpeg_buffer 等も関数内で設定するので global 宣言を追加
-        global camera, camera_initialized, is_raspberry_pi, jpeg_buffer, jpeg_encoder, jpeg_output
+        global camera, camera_initialized, is_raspberry_pi, jpeg_buffer, jpeg_encoder, jpeg_output, picam2
         if PICAMERA_AVAILABLE:
             # Picamera2を使用（ラズパイ公式カメラモジュール用）
             print("Picamera2でカメラを初期化中...")
@@ -245,6 +250,7 @@ def initialize_camera():
                 print(f"ビデオデバイス確認エラー: {e}")
 
             camera = Picamera2()
+            picam2 = camera  # クリーンアップ用にpicam2にも設定
 
             # カメラ設定
             print("カメラ設定を作成中...")
@@ -366,6 +372,7 @@ def initialize_camera():
         import traceback
         traceback.print_exc()
         camera_initialized = False
+        picam2 = None  # クリーンアップ用にNoneに設定
         return False
 
 def get_frame():
