@@ -82,6 +82,46 @@ uint8_t stepMasks[3];
 // 漏液センサ: デジタル34,35,36（Active LOW想定）。INPUT_PULLUPで使用。
 const int leakSensorPins[3]    = {34, 35, 36};
 
+// ==== ポンプ状態管理 ====
+// ポンプの状態を定義
+enum PumpState {
+  PUMP_STOPPED = 0,    // 完全停止（励磁OFF）
+  PUMP_STANDBY = 1,    // 待機中（励磁ON、動作停止）
+  PUMP_RUNNING = 2     // 動作中（励磁ON、動作中）
+};
+
+// 3台のポンプの状態を格納する配列
+volatile PumpState pumpStates[3] = {PUMP_STOPPED, PUMP_STOPPED, PUMP_STOPPED};
+
+// ===================== ポンプ状態管理関数 =====================
+// ポンプの状態を更新する関数
+void updatePumpState(int idx) {
+  if (idx < 0 || idx >= 3) return;
+  
+  bool motorOn = motorEnabled[idx];
+  bool enableOn = (digitalRead(enaPins[idx]) == LOW);
+  
+  if (motorOn && enableOn) {
+    pumpStates[idx] = PUMP_RUNNING;
+  } else if (!motorOn && enableOn) {
+    pumpStates[idx] = PUMP_STANDBY;
+  } else {
+    pumpStates[idx] = PUMP_STOPPED;
+  }
+}
+
+// ポンプ状態を文字列で取得する関数
+const char* getPumpStateString(int idx) {
+  if (idx < 0 || idx >= 3) return "INVALID";
+  
+  switch (pumpStates[idx]) {
+    case PUMP_STOPPED: return "STOPPED";
+    case PUMP_STANDBY: return "STANDBY";
+    case PUMP_RUNNING: return "RUNNING";
+    default: return "UNKNOWN";
+  }
+}
+
 // ===================== デバッグLED制御関数 =====================
 inline void setDebugLED(bool on) {
   digitalWrite(debugLedPin, on ? HIGH : LOW);
@@ -260,12 +300,12 @@ void lcdUpdateDisplay() {
 
 // 詳細情報表示（コマンド受信時などに使用）
 void lcdShowDetailedInfo() {
-  // 1行目：モータ状態
+  // 1行目：ポンプ状態
   lcdSetCursor(0, 0);
-  sprintf(lcdLine1, "M1:%s M2:%s M3:%s",
-    motorEnabled[0] ? "ON" : "OFF",
-    motorEnabled[1] ? "ON" : "OFF",
-    motorEnabled[2] ? "ON" : "OFF");
+  sprintf(lcdLine1, "P1:%s P2:%s P3:%s",
+    getPumpStateString(0),
+    getPumpStateString(1),
+    getPumpStateString(2));
   lcdPrint(lcdLine1);
   
   // 2行目：RPM情報
@@ -321,6 +361,7 @@ inline void handleStep(int idx) {
         digitalWrite(enaPins[idx], HIGH);  // 励磁OFF
         motorEnabled[idx] = false;
         planActive[idx] = false;
+        updatePumpState(idx); // ポンプ状態を更新
       }
     }
 
@@ -603,6 +644,7 @@ void processCommand(byte* cmd) {
     digitalWrite(enaPins[idx], LOW); // 励磁ON
     remainingSteps[idx] = (value > 0) ? value : 0;
     motorEnabled[idx] = true;
+    updatePumpState(idx); // ポンプ状態を更新
     if (useTrapezoid[idx]) {
       // 立ち上がり開始速度に設定
       currentSpeedSps[idx] = minStartSpeedSps;
@@ -688,6 +730,7 @@ void processCommand(byte* cmd) {
     currentSpeedSps[idx] = 0.0f;
     planActive[idx] = false;
     planStepsDone[idx] = 0;
+    updatePumpState(idx); // ポンプ状態を更新
     // LCD表示
     lcdClear();
     lcdPrint("Receive Stop");
@@ -725,11 +768,13 @@ void processCommand(byte* cmd) {
     }
   } else if (action == 'E') {  // Enable ON
     digitalWrite(enaPins[idx], LOW);
+    updatePumpState(idx); // ポンプ状態を更新
     // LCD表示
     lcdClear();
     lcdPrint("Receive EnableON");
   } else if (action == 'D') {  // Enable OFF
     digitalWrite(enaPins[idx], HIGH);
+    updatePumpState(idx); // ポンプ状態を更新
     // LCD表示
     lcdClear();
     lcdPrint("ReceiveEnableOFF");
@@ -852,6 +897,11 @@ void setup() {
   
   // 1msタイマーの設定
   setupTimer1ForMillisecond();
+  
+  // 初期ポンプ状態を設定
+  for (int i = 0; i < 3; i++) {
+    updatePumpState(i);
+  }
 
   setupTimer3(stepInterval[0]); // M1
   setupTimer4(stepInterval[1]); // M2
