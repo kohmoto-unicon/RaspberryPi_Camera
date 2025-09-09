@@ -62,6 +62,9 @@
         .btn-valve-out { background: linear-gradient(135deg, #fd7e14 0%, #e55a00 100%); color: #fff; }
         .btn-valve-out:hover { transform: translateY(-2px); box-shadow: 0 8px 20px rgba(253, 126, 20, 0.4); }
         
+        .btn-query { background: linear-gradient(135deg, #28a745 0%, #20c997 100%); color: #fff; }
+        .btn-query:hover { transform: translateY(-2px); box-shadow: 0 8px 20px rgba(40, 167, 69, 0.4); }
+        
         /* バルブ同期スイッチ用スタイル */
         .valve-sync-container { 
             display: flex; 
@@ -228,6 +231,82 @@
             return formatted.trim();
         }
 
+        // StatusByteの下位4ビットを解析して状態を取得する関数
+        function getStatusMessage(statusByte) {
+            const lower4bits = statusByte & 0x0F;
+            switch (lower4bits) {
+                case 0x00: return '正常';
+                case 0x01: return '初期化';
+                case 0x02: return '無効なコマンド';
+                case 0x03: return '無効なパラメータ';
+                case 0x04: return '無効なシーケンス';
+                case 0x05: return '無使用';
+                case 0x06: return 'EEPROM障害';
+                case 0x07: return '未初期化';
+                case 0x09: return 'プランジャー過負荷';
+                case 0x0A: return 'バルブ過負荷';
+                case 0x0B: return 'プランジャ移動未許可';
+                case 0x0F: return 'コマンドオーバーフロー';
+                default: return `未定義(${lower4bits.toString(16).toUpperCase()})`;
+            }
+        }
+
+        // 通信データを表示する関数
+        function displayResponse(pump, responseData) {
+            const responseDisplay = document.getElementById(`responseDisplay${pump}`);
+            if (responseDisplay && responseData) {
+                let displayText = '';
+                
+                // 送信コマンド表示
+                if (responseData.command_bytes && responseData.command_bytes.length > 0) {
+                    const commandBytes = new Uint8Array(responseData.command_bytes);
+                    displayText += '送信: ' + formatCommandBytes(commandBytes) + '\n';
+                }
+                
+                // 受信データ表示
+                if (responseData.response_bytes && responseData.response_bytes.length > 0) {
+                    const responseBytes = new Uint8Array(responseData.response_bytes);
+                    displayText += '受信: ' + formatCommandBytes(responseBytes) + '\n';
+                    
+                    // StatusByte解析（STX+30h+StatusByte+Data+ETX+Checksum形式）
+                    displayText += `受信データ解析: 長さ=${responseBytes.length}\n`;
+                    displayText += `先頭8バイト: ${responseBytes.slice(0, 8).map(b => '0x' + b.toString(16).toUpperCase()).join(' ')}\n`;
+                    
+                    // STX(0x02)を探す
+                    let stxIndex = -1;
+                    for (let i = 0; i < responseBytes.length; i++) {
+                        if (responseBytes[i] === 0x02) {
+                            stxIndex = i;
+                            break;
+                        }
+                    }
+                    
+                    if (stxIndex >= 0 && stxIndex + 3 < responseBytes.length) {
+                        // STXが見つかった場合、その後の30h+StatusByteをチェック
+                        if (responseBytes[stxIndex + 1] === 0x30) {
+                            const statusByte = responseBytes[stxIndex + 2];
+                            const statusMessage = getStatusMessage(statusByte);
+                            displayText += `状態: ${statusMessage} (StatusByte: 0x${statusByte.toString(16).toUpperCase()})\n`;
+                        } else {
+                            displayText += `StatusByte解析失敗: STX位置=${stxIndex}, 次のバイト=${responseBytes[stxIndex + 1].toString(16).toUpperCase()}\n`;
+                        }
+                    } else {
+                        displayText += `STXが見つからないか、データが短すぎます: STX位置=${stxIndex}, 長さ=${responseBytes.length}\n`;
+                    }
+                }
+                
+                // ステータス表示
+                if (responseData.success !== undefined) {
+                    displayText += '結果: ' + (responseData.success ? '成功' : '失敗');
+                    if (responseData.message) {
+                        displayText += ' - ' + responseData.message;
+                    }
+                }
+                
+                responseDisplay.value = displayText;
+            }
+        }
+
         async function checkStatus() {
             try {
                 const response = await fetch('/api/status');
@@ -283,14 +362,9 @@
                             const response = await fetch(`/api/syringe_pump_control?pump=${pump}&action=initialize&address=${address}`);
                             const data = await response.json();
                             
-                            // 成否に関わらず、コマンド内容が返ってきたら表示
-                            if (data.command_bytes && data.command_bytes.length > 0) {
-                                const commandDisplay = document.getElementById(`commandDisplay${pump}`);
-                                if (commandDisplay) {
-                                    const commandBytes = new Uint8Array(data.command_bytes);
-                                    commandDisplay.value = formatCommandBytes(commandBytes);
-                                }
-                            }
+                            // 通信データ表示
+                            displayResponse(pump, data);
+                            
                             if (!data.success) {
                                 console.error(`初期化コマンド送信失敗: ${data.message}`);
                             }
@@ -395,14 +469,9 @@
                             const response = await fetch(`/api/syringe_pump_control?pump=${pump}&action=move_up&steps=${steps}&address=${address}&valve_sync=${valveSync}`);
                             const data = await response.json();
                             
-                            // 成否に関わらず、コマンド内容が返ってきたら表示
-                            if (data.command_bytes && data.command_bytes.length > 0) {
-                                const commandDisplay = document.getElementById(`commandDisplay${pump}`);
-                                if (commandDisplay) {
-                                    const commandBytes = new Uint8Array(data.command_bytes);
-                                    commandDisplay.value = formatCommandBytes(commandBytes);
-                                }
-                            }
+                            // 通信データ表示
+                            displayResponse(pump, data);
+                            
                             if (!data.success) {
                                 console.error(`上移動コマンド送信失敗: ${data.message}`);
                             }
@@ -429,14 +498,9 @@
                             const response = await fetch(`/api/syringe_pump_control?pump=${pump}&action=move_down&steps=${steps}&address=${address}&valve_sync=${valveSync}`);
                             const data = await response.json();
                             
-                            // 成否に関わらず、コマンド内容が返ってきたら表示
-                            if (data.command_bytes && data.command_bytes.length > 0) {
-                                const commandDisplay = document.getElementById(`commandDisplay${pump}`);
-                                if (commandDisplay) {
-                                    const commandBytes = new Uint8Array(data.command_bytes);
-                                    commandDisplay.value = formatCommandBytes(commandBytes);
-                                }
-                            }
+                            // 通信データ表示
+                            displayResponse(pump, data);
+                            
                             if (!data.success) {
                                 console.error(`下移動コマンド送信失敗: ${data.message}`);
                             }
@@ -461,14 +525,9 @@
                             const response = await fetch(`/api/syringe_pump_control?pump=${pump}&action=stop&address=${address}`);
                             const data = await response.json();
                             
-                            // 成否に関わらず、コマンド内容が返ってきたら表示
-                            if (data.command_bytes && data.command_bytes.length > 0) {
-                                const commandDisplay = document.getElementById(`commandDisplay${pump}`);
-                                if (commandDisplay) {
-                                    const commandBytes = new Uint8Array(data.command_bytes);
-                                    commandDisplay.value = formatCommandBytes(commandBytes);
-                                }
-                            }
+                            // 通信データ表示
+                            displayResponse(pump, data);
+                            
                             if (!data.success) {
                                 console.error(`停止コマンド送信失敗: ${data.message}`);
                             }
@@ -493,14 +552,9 @@
                             const response = await fetch(`/api/syringe_pump_control?pump=${pump}&action=qr&address=${address}`);
                             const data = await response.json();
                             
-                            // 成否に関わらず、コマンド内容が返ってきたら表示
-                            if (data.command_bytes && data.command_bytes.length > 0) {
-                                const commandDisplay = document.getElementById(`commandDisplay${pump}`);
-                                if (commandDisplay) {
-                                    const commandBytes = new Uint8Array(data.command_bytes);
-                                    commandDisplay.value = formatCommandBytes(commandBytes);
-                                }
-                            }
+                            // 通信データ表示
+                            displayResponse(pump, data);
+                            
                             if (!data.success) {
                                 console.error(`ステータス確認コマンド送信失敗: ${data.message}`);
                             }
@@ -529,14 +583,9 @@
                             const response = await fetch(`/api/syringe_pump_control?pump=${pump}&action=loop&loopCount=${loopCount}&downSteps=${downSteps}&steps=${upSteps}&address=${address}&valve_sync=${valveSync}`);
                             const data = await response.json();
                             
-                            // 成否に関わらず、コマンド内容が返ってきたら表示
-                            if (data.command_bytes && data.command_bytes.length > 0) {
-                                const commandDisplay = document.getElementById(`commandDisplay${pump}`);
-                                if (commandDisplay) {
-                                    const commandBytes = new Uint8Array(data.command_bytes);
-                                    commandDisplay.value = formatCommandBytes(commandBytes);
-                                }
-                            }
+                            // 通信データ表示
+                            displayResponse(pump, data);
+                            
                             if (!data.success) {
                                 console.error(`ループコマンド送信失敗: ${data.message}`);
                             }
@@ -612,16 +661,12 @@
                             const position = positionSelect.value;
                             const address = document.getElementById(`addr${pump}`).value;
                             const valveSync = valveSyncStates[pump];
-                            const response = await fetch(`/api/syringe_pump_control?pump=${pump}&action=set_position&position=${position}&address=${address}&valve_sync=${valveSync}`);
+                            const response = await fetch(`/api/syringe_pump_control?pump=${pump}&action=reset_position&position=${position}&address=${address}&valve_sync=${valveSync}`);
                             const data = await response.json();
                             
-                            if (data.command_bytes && data.command_bytes.length > 0) {
-                                const commandDisplay = document.getElementById(`commandDisplay${pump}`);
-                                if (commandDisplay) {
-                                    const commandBytes = new Uint8Array(data.command_bytes);
-                                    commandDisplay.value = formatCommandBytes(commandBytes);
-                                }
-                            }
+                            // 通信データ表示
+                            displayResponse(pump, data);
+                            
                             if (!data.success) {
                                 console.error(`位置指定コマンド送信失敗: ${data.message}`);
                             }
@@ -679,13 +724,9 @@
                             const response = await fetch(`/api/syringe_pump_control?pump=${pump}&action=set_speed&speed=${speed}&address=${address}&valve_sync=${valveSync}`);
                             const data = await response.json();
                             
-                            if (data.command_bytes && data.command_bytes.length > 0) {
-                                const commandDisplay = document.getElementById(`commandDisplay${pump}`);
-                                if (commandDisplay) {
-                                    const commandBytes = new Uint8Array(data.command_bytes);
-                                    commandDisplay.value = formatCommandBytes(commandBytes);
-                                }
-                            }
+                            // 通信データ表示
+                            displayResponse(pump, data);
+                            
                             if (!data.success) {
                                 console.error(`初速セットコマンド送信失敗: ${data.message}`);
                             }
@@ -694,6 +735,162 @@
                         } finally {
                             speedSetBtn.disabled = false;
                             speedSetBtn.textContent = '初速セット';
+                        }
+                    });
+                }
+
+                // 勾配セットセレクトボックス
+                const gradientSelect = document.getElementById(`gradientSelect${pump}`);
+                if (gradientSelect) {
+                    gradientSelect.addEventListener('change', () => {
+                        if (gradientSelect.value === 'custom') {
+                            const customValue = prompt('勾配を入力してください:');
+                            if (customValue !== null && customValue.trim() !== '') {
+                                const numValue = parseInt(customValue);
+                                if (!isNaN(numValue) && numValue >= 0 && numValue <= 9999) {
+                                    const newOption = document.createElement('option');
+                                    newOption.value = customValue;
+                                    newOption.textContent = customValue;
+                                    gradientSelect.insertBefore(newOption, gradientSelect.lastElementChild);
+                                    gradientSelect.value = customValue;
+                                } else {
+                                    alert('有効な数値を入力してください（0-9999の範囲）');
+                                    gradientSelect.value = '0';
+                                }
+                            } else {
+                                gradientSelect.value = '0';
+                            }
+                        }
+                    });
+                }
+
+                // 勾配セットボタン
+                const gradientSetBtn = document.getElementById(`gradientSetBtn${pump}`);
+                if (gradientSetBtn) {
+                    gradientSetBtn.addEventListener('click', async () => {
+                        try {
+                            gradientSetBtn.disabled = true;
+                            gradientSetBtn.textContent = '送信中...';
+                            const value = gradientSelect.value;
+                            const address = document.getElementById(`addr${pump}`).value;
+                            const valveSync = valveSyncStates[pump];
+                            const response = await fetch(`/api/syringe_pump_control?pump=${pump}&action=set_gradient&value=${value}&address=${address}&valve_sync=${valveSync}`);
+                            const data = await response.json();
+                            // 通信データ表示
+                            displayResponse(pump, data);
+                            
+                            if (!data.success) {
+                                console.error(`勾配セットコマンド送信失敗: ${data.message}`);
+                            }
+                        } catch (error) {
+                            console.error('勾配セットコマンド送信中にエラーが発生しました:', error);
+                        } finally {
+                            gradientSetBtn.disabled = false;
+                            gradientSetBtn.textContent = '勾配セット';
+                        }
+                    });
+                }
+
+                // 最高速度セレクトボックス
+                const maxSpeedSelect = document.getElementById(`maxSpeedSelect${pump}`);
+                if (maxSpeedSelect) {
+                    maxSpeedSelect.addEventListener('change', () => {
+                        if (maxSpeedSelect.value === 'custom') {
+                            const customValue = prompt('最高速度を入力してください:');
+                            if (customValue !== null && customValue.trim() !== '') {
+                                const numValue = parseInt(customValue);
+                                if (!isNaN(numValue) && numValue >= 0 && numValue <= 9999) {
+                                    const newOption = document.createElement('option');
+                                    newOption.value = customValue;
+                                    newOption.textContent = customValue;
+                                    maxSpeedSelect.insertBefore(newOption, maxSpeedSelect.lastElementChild);
+                                    maxSpeedSelect.value = customValue;
+                                } else {
+                                    alert('有効な数値を入力してください（0-9999の範囲）');
+                                    maxSpeedSelect.value = '0';
+                                }
+                            } else {
+                                maxSpeedSelect.value = '0';
+                            }
+                        }
+                    });
+                }
+
+                // 最高速度ボタン
+                const maxSpeedSetBtn = document.getElementById(`maxSpeedSetBtn${pump}`);
+                if (maxSpeedSetBtn) {
+                    maxSpeedSetBtn.addEventListener('click', async () => {
+                        try {
+                            maxSpeedSetBtn.disabled = true;
+                            maxSpeedSetBtn.textContent = '送信中...';
+                            const value = maxSpeedSelect.value;
+                            const address = document.getElementById(`addr${pump}`).value;
+                            const valveSync = valveSyncStates[pump];
+                            const response = await fetch(`/api/syringe_pump_control?pump=${pump}&action=set_max_speed&value=${value}&address=${address}&valve_sync=${valveSync}`);
+                            const data = await response.json();
+                            // 通信データ表示
+                            displayResponse(pump, data);
+                            
+                            if (!data.success) {
+                                console.error(`最高速度コマンド送信失敗: ${data.message}`);
+                            }
+                        } catch (error) {
+                            console.error('最高速度コマンド送信中にエラーが発生しました:', error);
+                        } finally {
+                            maxSpeedSetBtn.disabled = false;
+                            maxSpeedSetBtn.textContent = '最高速度';
+                        }
+                    });
+                }
+
+                // 切れ速度セレクトボックス
+                const cutoffSpeedSelect = document.getElementById(`cutoffSpeedSelect${pump}`);
+                if (cutoffSpeedSelect) {
+                    cutoffSpeedSelect.addEventListener('change', () => {
+                        if (cutoffSpeedSelect.value === 'custom') {
+                            const customValue = prompt('切れ速度を入力してください:');
+                            if (customValue !== null && customValue.trim() !== '') {
+                                const numValue = parseInt(customValue);
+                                if (!isNaN(numValue) && numValue >= 0 && numValue <= 9999) {
+                                    const newOption = document.createElement('option');
+                                    newOption.value = customValue;
+                                    newOption.textContent = customValue;
+                                    cutoffSpeedSelect.insertBefore(newOption, cutoffSpeedSelect.lastElementChild);
+                                    cutoffSpeedSelect.value = customValue;
+                                } else {
+                                    alert('有効な数値を入力してください（0-9999の範囲）');
+                                    cutoffSpeedSelect.value = '0';
+                                }
+                            } else {
+                                cutoffSpeedSelect.value = '0';
+                            }
+                        }
+                    });
+                }
+
+                // 切れ速度ボタン
+                const cutoffSpeedSetBtn = document.getElementById(`cutoffSpeedSetBtn${pump}`);
+                if (cutoffSpeedSetBtn) {
+                    cutoffSpeedSetBtn.addEventListener('click', async () => {
+                        try {
+                            cutoffSpeedSetBtn.disabled = true;
+                            cutoffSpeedSetBtn.textContent = '送信中...';
+                            const value = cutoffSpeedSelect.value;
+                            const address = document.getElementById(`addr${pump}`).value;
+                            const valveSync = valveSyncStates[pump];
+                            const response = await fetch(`/api/syringe_pump_control?pump=${pump}&action=set_cutoff_speed&value=${value}&address=${address}&valve_sync=${valveSync}`);
+                            const data = await response.json();
+                            // 通信データ表示
+                            displayResponse(pump, data);
+                            
+                            if (!data.success) {
+                                console.error(`切れ速度コマンド送信失敗: ${data.message}`);
+                            }
+                        } catch (error) {
+                            console.error('切れ速度コマンド送信中にエラーが発生しました:', error);
+                        } finally {
+                            cutoffSpeedSetBtn.disabled = false;
+                            cutoffSpeedSetBtn.textContent = '切れ速度';
                         }
                     });
                 }
@@ -710,14 +907,9 @@
                             const response = await fetch(`/api/syringe_pump_control?pump=${pump}&action=valve_in&address=${address}`);
                             const data = await response.json();
                             
-                            // 成否に関わらず、コマンド内容が返ってきたら表示
-                            if (data.command_bytes && data.command_bytes.length > 0) {
-                                const commandDisplay = document.getElementById(`commandDisplay${pump}`);
-                                if (commandDisplay) {
-                                    const commandBytes = new Uint8Array(data.command_bytes);
-                                    commandDisplay.value = formatCommandBytes(commandBytes);
-                                }
-                            }
+                            // 通信データ表示
+                            displayResponse(pump, data);
+                            
                             if (!data.success) {
                                 console.error(`バルブINコマンド送信失敗: ${data.message}`);
                             }
@@ -756,14 +948,9 @@
                             const response = await fetch(`/api/syringe_pump_control?pump=${pump}&action=valve_out&address=${address}`);
                             const data = await response.json();
                             
-                            // 成否に関わらず、コマンド内容が返ってきたら表示
-                            if (data.command_bytes && data.command_bytes.length > 0) {
-                                const commandDisplay = document.getElementById(`commandDisplay${pump}`);
-                                if (commandDisplay) {
-                                    const commandBytes = new Uint8Array(data.command_bytes);
-                                    commandDisplay.value = formatCommandBytes(commandBytes);
-                                }
-                            }
+                            // 通信データ表示
+                            displayResponse(pump, data);
+                            
                             if (!data.success) {
                                 console.error(`バルブOUTコマンド送信失敗: ${data.message}`);
                             }
@@ -786,6 +973,60 @@
                         } finally {
                             valveOutBtn.disabled = false;
                             valveOutBtn.textContent = 'バルブ OUT';
+                        }
+                    });
+                }
+
+                // P移動数問い合わせボタン
+                const pMoveQueryBtn = document.getElementById(`pMoveQueryBtn${pump}`);
+                if (pMoveQueryBtn) {
+                    pMoveQueryBtn.addEventListener('click', async () => {
+                        try {
+                            pMoveQueryBtn.disabled = true;
+                            pMoveQueryBtn.textContent = '送信中...';
+                            
+                            const address = document.getElementById(`addr${pump}`).value;
+                            const response = await fetch(`/api/syringe_pump_control?pump=${pump}&action=p_move_query&address=${address}`);
+                            const data = await response.json();
+                            
+                            // 通信データ表示
+                            displayResponse(pump, data);
+                            
+                            if (!data.success) {
+                                console.error(`P移動数コマンド送信失敗: ${data.message}`);
+                            }
+                        } catch (error) {
+                            console.error('P移動数コマンド送信中にエラーが発生しました:', error);
+                        } finally {
+                            pMoveQueryBtn.disabled = false;
+                            pMoveQueryBtn.textContent = 'P移動数';
+                        }
+                    });
+                }
+
+                // V移動数問い合わせボタン
+                const vMoveQueryBtn = document.getElementById(`vMoveQueryBtn${pump}`);
+                if (vMoveQueryBtn) {
+                    vMoveQueryBtn.addEventListener('click', async () => {
+                        try {
+                            vMoveQueryBtn.disabled = true;
+                            vMoveQueryBtn.textContent = '送信中...';
+                            
+                            const address = document.getElementById(`addr${pump}`).value;
+                            const response = await fetch(`/api/syringe_pump_control?pump=${pump}&action=v_move_query&address=${address}`);
+                            const data = await response.json();
+                            
+                            // 通信データ表示
+                            displayResponse(pump, data);
+                            
+                            if (!data.success) {
+                                console.error(`V移動数コマンド送信失敗: ${data.message}`);
+                            }
+                        } catch (error) {
+                            console.error('V移動数コマンド送信中にエラーが発生しました:', error);
+                        } finally {
+                            vMoveQueryBtn.disabled = false;
+                            vMoveQueryBtn.textContent = 'V移動数';
                         }
                     });
                 }
@@ -851,6 +1092,36 @@
                             <option value="custom">カスタム入力...</option>
                         </select>
                         <button type="button" class="btn btn-speed-set" id="speedSetBtn{{ pump }}" data-pump="{{ pump }}">初速セット</button>
+                    </div>
+
+                    <div class="speed-control-container">
+                        <select id="gradientSelect{{ pump }}" data-pump="{{ pump }}" style="width: 100px; padding: 10px 12px; border: 2px solid #ddd; border-radius: 8px; font-size: 14px;">
+                            <option value="0" selected>0</option>
+                            <option value="100">100</option>
+                            <option value="1000">1000</option>
+                            <option value="custom">カスタム入力...</option>
+                        </select>
+                        <button type="button" class="btn btn-speed-set" id="gradientSetBtn{{ pump }}" data-pump="{{ pump }}">勾配セット</button>
+                    </div>
+
+                    <div class="speed-control-container">
+                        <select id="maxSpeedSelect{{ pump }}" data-pump="{{ pump }}" style="width: 100px; padding: 10px 12px; border: 2px solid #ddd; border-radius: 8px; font-size: 14px;">
+                            <option value="0" selected>0</option>
+                            <option value="100">100</option>
+                            <option value="1000">1000</option>
+                            <option value="custom">カスタム入力...</option>
+                        </select>
+                        <button type="button" class="btn btn-speed-set" id="maxSpeedSetBtn{{ pump }}" data-pump="{{ pump }}">最高速度</button>
+                    </div>
+
+                    <div class="speed-control-container">
+                        <select id="cutoffSpeedSelect{{ pump }}" data-pump="{{ pump }}" style="width: 100px; padding: 10px 12px; border: 2px solid #ddd; border-radius: 8px; font-size: 14px;">
+                            <option value="0" selected>0</option>
+                            <option value="100">100</option>
+                            <option value="1000">1000</option>
+                            <option value="custom">カスタム入力...</option>
+                        </select>
+                        <button type="button" class="btn btn-speed-set" id="cutoffSpeedSetBtn{{ pump }}" data-pump="{{ pump }}">切れ速度</button>
                     </div>
                     
                     <div class="control-group">
@@ -925,11 +1196,15 @@
                             <button type="button" class="btn btn-valve-in" id="valveInBtn{{ pump }}" data-pump="{{ pump }}">バルブ IN</button>
                             <button type="button" class="btn btn-valve-out" id="valveOutBtn{{ pump }}" data-pump="{{ pump }}">バルブ OUT</button>
                         </div>
+                        <div class="input-group" style="flex-direction: column; gap: 8px; align-items: flex-start; margin-top: 8px;">
+                            <button type="button" class="btn btn-query" id="pMoveQueryBtn{{ pump }}" data-pump="{{ pump }}">P移動数</button>
+                            <button type="button" class="btn btn-query" id="vMoveQueryBtn{{ pump }}" data-pump="{{ pump }}">V移動数</button>
+                        </div>
                     </div>
                     
                     <div class="control-group">
-                        <label for="commandDisplay{{ pump }}">送信コマンド</label>
-                        <textarea id="commandDisplay{{ pump }}" rows="3" style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px; font-family: monospace; font-size: 12px; resize: vertical;" readonly placeholder="コマンドが送信されるとここに表示されます"></textarea>
+                        <label for="responseDisplay{{ pump }}">通信データ</label>
+                        <textarea id="responseDisplay{{ pump }}" rows="6" style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px; font-family: monospace; font-size: 12px; resize: vertical;" readonly placeholder="ポンプとの通信データがここに表示されます"></textarea>
                     </div>
                 </div>
                 {% endfor %}

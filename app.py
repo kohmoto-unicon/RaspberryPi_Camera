@@ -1233,20 +1233,20 @@ def api_syringe_pump_control():
         valve_sync = request.args.get("valve_sync", "true").lower() == "true"
         
         if action == "initialize":
-            success, command_bytes = controller.send_command("ZR", selected_address)
+            success, command_bytes, response_bytes = controller.send_command("ZR", selected_address)
             message = "初期化コマンド送信完了" if success else "初期化コマンド送信失敗"
         elif action == "move_up":
             # バルブ同期がONの場合はOを追加、OFFの場合は従来通り
             command = f"OD{steps}R" if valve_sync else f"D{steps}R"
-            success, command_bytes = controller.send_command(command, selected_address)
+            success, command_bytes, response_bytes = controller.send_command(command, selected_address)
             message = f"上移動コマンド送信完了（{steps}ステップ、バルブ同期: {'ON' if valve_sync else 'OFF'}）" if success else "上移動コマンド送信失敗"
         elif action == "move_down":
             # バルブ同期がONの場合はIを追加、OFFの場合は従来通り
             command = f"IP{steps}R" if valve_sync else f"P{steps}R"
-            success, command_bytes = controller.send_command(command, selected_address)
+            success, command_bytes, response_bytes = controller.send_command(command, selected_address)
             message = f"下移動コマンド送信完了（{steps}ステップ、バルブ同期: {'ON' if valve_sync else 'OFF'}）" if success else "下移動コマンド送信失敗"
         elif action == "stop":
-            success, command_bytes = controller.send_command("TR", selected_address)
+            success, command_bytes, response_bytes = controller.send_command("TR", selected_address)
             message = "停止コマンド送信完了" if success else "停止コマンド送信失敗"
         elif action == "loop":
             # ループコマンド: "P" + 下移動ステップ数 + "D" + 上移動ステップ数 + "G" + ループ数
@@ -1254,18 +1254,24 @@ def api_syringe_pump_control():
             up_steps = request.args.get("steps", "3000")
             loop_count = request.args.get("loopCount", "0")
             loop_command = f"IP{down_steps}OD{up_steps}G{loop_count}R"
-            success, command_bytes = controller.send_command(loop_command, selected_address)
+            success, command_bytes, response_bytes = controller.send_command(loop_command, selected_address)
             message = f"ループコマンド送信完了（下:{down_steps}、上:{up_steps}、ループ:{loop_count}）" if success else "ループコマンド送信失敗"
         elif action == "qr":
-            success, command_bytes = controller.send_command("QR", selected_address)
+            success, command_bytes, response_bytes = controller.send_command("QR", selected_address)
             message = "ステータス確認コマンド送信完了" if success else "ステータス確認コマンド送信失敗"
         elif action == "valve_in":
-            success, command_bytes = controller.send_command("IR", selected_address)
+            success, command_bytes, response_bytes = controller.send_command("IR", selected_address)
             message = "バルブINコマンド送信完了" if success else "バルブINコマンド送信失敗"
         elif action == "valve_out":
-            success, command_bytes = controller.send_command("OR", selected_address)
+            success, command_bytes, response_bytes = controller.send_command("OR", selected_address)
             message = "バルブOUTコマンド送信完了" if success else "バルブOUTコマンド送信失敗"
-        elif action == "set_position":
+        elif action == "p_move_query":
+            success, command_bytes, response_bytes = controller.send_command("?16", selected_address)
+            message = "P移動数問い合わせコマンド送信完了" if success else "P移動数問い合わせコマンド送信失敗"
+        elif action == "v_move_query":
+            success, command_bytes, response_bytes = controller.send_command("?17", selected_address)
+            message = "V移動数問い合わせコマンド送信完了" if success else "V移動数問い合わせコマンド送信失敗"
+        elif action == "reset_position":
             position = request.args.get("position", "0")
             try:
                 position = int(position)
@@ -1279,16 +1285,10 @@ def api_syringe_pump_control():
                     'success': False,
                     'message': f'無効な位置値: {position}（数値を入力してください）'
                 })
-            
-            # バルブ同期がONの場合はIを追加、OFFの場合は従来通り
-            command = f"IP{position}R" if valve_sync else f"P{position}R"
-            success, command_bytes = controller.send_command(command, selected_address)
-            message = f"位置指定コマンド送信完了（位置: {position}、バルブ同期: {'ON' if valve_sync else 'OFF'}）" if success else "位置指定コマンド送信失敗"
-        elif action == "reset_position":
-            # 位置リセットコマンド（通常は0に移動）
-            command = "IP0R" if valve_sync else "P0R"
-            success, command_bytes = controller.send_command(command, selected_address)
-            message = f"位置リセットコマンド送信完了（バルブ同期: {'ON' if valve_sync else 'OFF'}）" if success else "位置リセットコマンド送信失敗"
+            # 位置リセットコマンド（A + セレクトボックスの値 + R）
+            command = f"A{position}R"
+            success, command_bytes, response_bytes = controller.send_command(command, selected_address)
+            message = f"位置リセットコマンド送信完了（位置: {position}）" if success else "位置リセットコマンド送信失敗"
         elif action == "set_speed":
             speed = request.args.get("speed", "1000")
             try:
@@ -1305,9 +1305,63 @@ def api_syringe_pump_control():
                 })
             
             # 初速セットコマンド（S + 速度値 + R）
-            command = f"S{speed}R"
-            success, command_bytes = controller.send_command(command, selected_address)
+            command = f"v{speed}R"
+            success, command_bytes, response_bytes = controller.send_command(command, selected_address)
             message = f"初速セットコマンド送信完了（初速: {speed}）" if success else "初速セットコマンド送信失敗"
+        elif action == "set_gradient":
+            value = request.args.get("value", "0")
+            try:
+                value = int(value)
+                if value < 0 or value > 9999:
+                    return jsonify({
+                        'success': False,
+                        'message': f'無効な勾配値: {value}（0-9999の範囲で指定してください）'
+                    })
+            except ValueError:
+                return jsonify({
+                    'success': False,
+                    'message': f'無効な勾配値: {value}（数値を入力してください）'
+                })
+            # 勾配セット（L + 値 + R）
+            command = f"L{value}R"
+            success, command_bytes, response_bytes = controller.send_command(command, selected_address)
+            message = f"勾配セットコマンド送信完了（{value}）" if success else "勾配セットコマンド送信失敗"
+        elif action == "set_max_speed":
+            value = request.args.get("value", "0")
+            try:
+                value = int(value)
+                if value < 0 or value > 9999:
+                    return jsonify({
+                        'success': False,
+                        'message': f'無効な最高速度: {value}（0-9999の範囲で指定してください）'
+                    })
+            except ValueError:
+                return jsonify({
+                    'success': False,
+                    'message': f'無効な最高速度: {value}（数値を入力してください）'
+                })
+            # 最高速度（V + 値 + R）
+            command = f"V{value}R"
+            success, command_bytes, response_bytes = controller.send_command(command, selected_address)
+            message = f"最高速度コマンド送信完了（{value}）" if success else "最高速度コマンド送信失敗"
+        elif action == "set_cutoff_speed":
+            value = request.args.get("value", "0")
+            try:
+                value = int(value)
+                if value < 0 or value > 9999:
+                    return jsonify({
+                        'success': False,
+                        'message': f'無効な切れ速度: {value}（0-9999の範囲で指定してください）'
+                    })
+            except ValueError:
+                return jsonify({
+                    'success': False,
+                    'message': f'無効な切れ速度: {value}（数値を入力してください）'
+                })
+            # 切れ速度（仮仕様: C + 値 + R）
+            command = f"C{value}R"
+            success, command_bytes, response_bytes = controller.send_command(command, selected_address)
+            message = f"切れ速度コマンド送信完了（{value}）" if success else "切れ速度コマンド送信失敗"
         else:
             return jsonify({
                 'success': False,
@@ -1319,7 +1373,8 @@ def api_syringe_pump_control():
             'message': message,
             'pump': pump_index + 1,
             'action': action,
-            'command_bytes': list(command_bytes) if command_bytes else []
+            'command_bytes': list(command_bytes) if command_bytes else [],
+            'response_bytes': list(response_bytes) if response_bytes else []
         })
         
     except Exception as e:

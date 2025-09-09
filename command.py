@@ -21,15 +21,24 @@ class SyringePumpController:
         frame = frame_without_cs + bytes([checksum])
         return frame
     
-    def send_command(self, command: str, address: int) -> tuple[bool, bytes]:
-        """コマンドを送信"""
+    def send_command(self, command: str, address: int) -> tuple[bool, bytes, bytes]:
+        """コマンドを送信し、応答を受信"""
         try:
             full_command = self.create_command(command, address)
             self.serial_port.write(full_command)
             print(f"[Pump {self.pump_number}] 送信: {full_command.hex()}")
-            return True, full_command
+            
+            # 応答を受信（タイムアウト付き）
+            self.serial_port.timeout = 1.0  # 1秒のタイムアウト
+            response = self.serial_port.read(1024)  # 最大1024バイト読み取り
+            if response:
+                print(f"[Pump {self.pump_number}] 受信: {response.hex()}")
+                return True, full_command, response
+            else:
+                print(f"[Pump {self.pump_number}] 応答なし")
+                return True, full_command, b''
         except Exception as e:
             print(f"シリンジポンプ送信エラー: {e}")
             # Always return the command bytes even if serial communication fails
             full_command = self.create_command(command, address)
-            return False, full_command
+            return False, full_command, b''
