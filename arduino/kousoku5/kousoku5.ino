@@ -83,6 +83,10 @@ uint8_t stepMasks[3];
 // 漏液センサ: デジタル34,35,36（Active LOW想定）。INPUT_PULLUPで使用。
 const int leakSensorPins[3]    = {34, 35, 36};
 
+// 漏液監視用カウンタ/フラグ
+volatile uint8_t leakConsecutiveOnCount = 0; // 連続ON回数（100ms刻み）
+volatile bool leakStopRequested = false;     // 停止要求フラグ（loopで処理）
+
 // ==== ポンプ状態管理 ====
 // ポンプの状態を定義
 enum PumpState {
@@ -121,6 +125,27 @@ const char* getPumpStateString(int idx) {
     case PUMP_RUNNING: return "RUNNING";
     default: return "UNKNOWN";
   }
+}
+
+// ===================== 全ポンプ停止関数 =====================
+// 3台すべてのポンプを安全に停止（励磁OFF、残ステップ/速度/計画をクリア）
+void stopAllPumps() {
+  noInterrupts();
+  for (int i = 0; i < 3; i++) {
+    motorEnabled[i] = false;
+    digitalWrite(enaPins[i], HIGH);  // 励磁OFF
+    remainingSteps[i] = 0;
+    currentSpeedSps[i] = 0.0f;
+    planActive[i] = false;
+    planStepsDone[i] = 0;
+    // ペンディング更新はクリアしておく
+    pendingIntervalUpdate[i] = false;
+    pendingIntervalUs[i] = 0;
+    // STEPピンをLOWに戻す（安全側）
+    *stepPorts[i] &= ~stepMasks[i];
+    updatePumpState(i);
+  }
+  interrupts();
 }
 
 // ===================== デバッグLED制御関数 =====================
@@ -548,9 +573,18 @@ ISR(TIMER1_COMPA_vect) {
     }
   }
 
-  // 漏液センサ動作チェック（20msごとに実行）
-  if (msCounter % 20 == 0) {
-    setDebugLED(isLeakDetected(0));
+  // 漏液センサ動作チェック（100msごとに実行）
+  if (msCounter % 100 == 0) {
+    bool leakOn = isLeakDetected(0) || isLeakDetected(1) || isLeakDetected(2);
+    setDebugLED(leakOn);
+    if (leakOn) {
+      if (leakConsecutiveOnCount < 255) leakConsecutiveOnCount++;
+      if (leakConsecutiveOnCount >= 5) {
+        leakStopRequested = true; // 500ms間連続でON → 停止要求
+      }
+    } else {
+      leakConsecutiveOnCount = 0;
+    }
   }
 }
 
@@ -637,11 +671,19 @@ void processCommand(byte* cmd) {
   for (int i = 1; i <= 8; i++) checksum ^= cmd[i];
   if (checksum != cmd[9]) return;
 
+  // 緊急停止（全ポンプ停止）はポンプ番号検証より先に処理
+  char action = cmd[2];
+  if (action == 'Z') {  // 緊急停止
+    stopAllPumps();
+    lcdClear();
+    lcdPrint("Emergency Stop");
+    return;
+  }
+
   int pumpNo = cmd[1] - '0';
   if (pumpNo < 1 || pumpNo > 3) return;
   int idx = pumpNo - 1;
 
-  char action = cmd[2];
   char numStr[7];
   memcpy(numStr, &cmd[3], 6);
   numStr[6] = '\0';
@@ -937,4 +979,13 @@ void loop() {
   
   // LCD表示更新
   lcdUpdateDisplay();
+
+  // 漏液による全停止要求を処理（メインループ側で安全に停止）
+  if (leakStopRequested) {
+    leakStopRequested = false;
+    stopAllPumps();
+    // 必要ならLCDやシリアル通知を追加可能
+    lcdClear();
+    lcdPrint("LEAK STOP");
+  }
 }
