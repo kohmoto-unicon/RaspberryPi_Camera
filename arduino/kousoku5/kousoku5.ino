@@ -33,6 +33,7 @@ volatile unsigned long extInterruptCounter[3] = {0, 0, 0};
 // 外部割り込みの時間計測用変数
 volatile unsigned long lastInterruptTimeMs[3] = {0, 0, 0}; // 前回の割り込み時間[ms]
 volatile unsigned long rotationTimeMs[3] = {0, 0, 0};      // 1回転にかかった時間[ms]
+const unsigned long RPM_TIMEOUT_MS = 3000;                 // 回転数タイムアウト時間（3秒）
 
 // ==== モータピン設定 ====
 const int stepPins[3] = {22, 25, 28};  // M1〜M3 STEP (PUL+)
@@ -494,13 +495,19 @@ ISR(INT3_vect) {
   }
   lastInterruptTimeMs[0] = currentTimeMs;
   
-  // デバッグLEDをトグル (INT3のみLED連動)
-  toggleDebugLED();
 }
 
 // RPM計算用の関数（整数型に変更）
 int calculateRPM(int idx) {
   if (idx < 0 || idx >= 3) return 0;
+  
+  // 現在の時間を取得
+  unsigned long currentTime = millis();
+  
+  // 最後の割り込みから3秒以上経過している場合は0を返す
+  if (lastInterruptTimeMs[idx] > 0 && (currentTime - lastInterruptTimeMs[idx]) > RPM_TIMEOUT_MS) {
+    return 0;
+  }
   
   if (rotationTimeMs[idx] > 0) {
     // 60000ms / 回転時間[ms] = 回転数/分
@@ -536,8 +543,8 @@ ISR(TIMER1_COMPA_vect) {
   //      Serial.print(rpm);
   //      Serial.print("  ");
   //
-      Serial.print(calculateRPM(0));
-      Serial.println();
+  //      Serial.print(calculateRPM(0));
+  //      Serial.println();
     }
   }
 
@@ -848,13 +855,15 @@ void processCommand(byte* cmd) {
     
     response[9] = 0x03;  // ETX
     
+    response[10] = 0x00;  // null
     // 応答を送信
     Serial.write(response, 10);
     
     // LCD表示
     lcdClear();
     lcdPrint("Receive Rotate X");
-    lcdPrint("response");
+    lcdSetCursor(0, 1);  // 2行目に移動
+    lcdPrint(response);
   }
 }
 
