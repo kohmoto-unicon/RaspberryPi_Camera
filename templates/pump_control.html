@@ -269,6 +269,60 @@
       box-shadow: 0 5px 15px rgba(79, 172, 254, 0.4);
     }
 
+    /* 漏液検出アラート */
+    .leak-alert {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      background: linear-gradient(135deg, #ff416c 0%, #ff4b2b 100%);
+      color: white;
+      text-align: center;
+      padding: 20px;
+      font-size: 2.5em;
+      font-weight: bold;
+      z-index: 9999;
+      box-shadow: 0 4px 20px rgba(255, 65, 108, 0.5);
+      animation: leakAlertPulse 1s infinite alternate;
+      display: none;
+    }
+
+    .leak-alert.show {
+      display: block;
+    }
+
+    @keyframes leakAlertPulse {
+      0% {
+        transform: scale(1);
+        box-shadow: 0 4px 20px rgba(255, 65, 108, 0.5);
+      }
+      100% {
+        transform: scale(1.02);
+        box-shadow: 0 6px 30px rgba(255, 65, 108, 0.8);
+      }
+    }
+
+    .leak-reset-btn {
+      position: absolute;
+      right: 20px;
+      top: 50%;
+      transform: translateY(-50%);
+      background: rgba(255, 255, 255, 0.2);
+      border: 2px solid white;
+      color: white;
+      padding: 10px 20px;
+      border-radius: 25px;
+      cursor: pointer;
+      font-size: 0.6em;
+      font-weight: bold;
+      transition: all 0.3s ease;
+    }
+
+    .leak-reset-btn:hover {
+      background: rgba(255, 255, 255, 0.3);
+      transform: translateY(-50%) scale(1.05);
+    }
+
     @media (max-width: 768px) {
       .header h1 {
         font-size: 2em;
@@ -285,6 +339,12 @@
   </style>
 </head>
 <body>
+  <!-- 漏液検出アラート -->
+  <div class="leak-alert" id="leakAlert">
+    🚨 漏液発生！ 🚨
+    <button class="leak-reset-btn" onclick="resetLeakAlert()">リセット</button>
+  </div>
+
   <div class="container">
     <div class="header">
       <h1>ハイセラポンプ制御</h1>
@@ -429,10 +489,14 @@
     // RPM取得
     async function getRPM(pump){
       try {
+        console.log(`[DEBUG] getRPM呼び出し: ポンプ${pump}`);
         const response = await fetch(`/api/get_rpm?pump=${pump}`);
         const data = await response.json();
         
+        console.log(`[DEBUG] getRPM レスポンス:`, data);
+        
         const rpmDisplay = document.getElementById('rpmValue' + pump);
+        console.log(`[DEBUG] getRPM 見つかった要素:`, rpmDisplay);
         
         // 送信コマンドの内容を表示
         if (data.command_bytes && data.command_bytes.length > 0) {
@@ -444,15 +508,15 @@
         }
         
         if (data.success) {
-          rpmDisplay.textContent = data.rpm + ' rpm';
+          updateRpmDisplay(pump, data.rpm);
           console.log(data.message);
         } else {
-          rpmDisplay.textContent = '0 rpm';
+          updateRpmDisplay(pump, 0);
           console.error('回転数取得失敗:', data.message);
         }
       } catch (error) {
         console.error('通信エラー:', error);
-        document.getElementById('rpmValue' + pump).textContent = '0 rpm';
+        updateRpmDisplay(pump, 0);
       }
     }
 
@@ -515,12 +579,155 @@
       }
     }
 
+    // 漏液検出アラートの表示/非表示
+    function updateLeakAlert() {
+      const leakAlert = document.getElementById('leakAlert');
+      if (leakAlert) {
+        console.log('漏液アラート更新:', window.leakDetected);
+        if (window.leakDetected) {
+          leakAlert.classList.add('show');
+          console.log('漏液アラートを表示しました');
+        } else {
+          leakAlert.classList.remove('show');
+          console.log('漏液アラートを非表示にしました');
+        }
+      } else {
+        console.error('漏液アラート要素が見つかりません');
+      }
+    }
+
+    // 漏液検出状態をリセット
+    async function resetLeakAlert() {
+      try {
+        const response = await fetch('/api/reset_leak', {
+          method: 'POST'
+        });
+        const data = await response.json();
+        
+        if (data.success) {
+          window.leakDetected = false;
+          updateLeakAlert();
+          console.log('漏液検出状態をリセットしました');
+        } else {
+          console.error('漏液検出状態のリセットに失敗:', data.message);
+        }
+      } catch (error) {
+        console.error('通信エラー:', error);
+      }
+    }
+
+    // 漏液検出状態をチェック
+    async function checkLeakStatus() {
+      try {
+        const response = await fetch('/api/status');
+        const data = await response.json();
+        
+        console.log('漏液検出状態確認:', data.leak_detected);
+        
+        if (data.leak_detected !== undefined) {
+          const wasLeakDetected = window.leakDetected;
+          window.leakDetected = data.leak_detected;
+          
+          if (window.leakDetected !== wasLeakDetected) {
+            console.log('漏液検出状態が変更されました:', wasLeakDetected, '->', window.leakDetected);
+          }
+          
+          updateLeakAlert();
+        }
+      } catch (error) {
+        console.error('漏液検出状態確認エラー:', error);
+      }
+    }
+
+    // 回転数取得を自動実行（漏液検出のため）
+    async function autoGetRpm() {
+      try {
+        console.log('自動回転数取得を実行中...', new Date().toLocaleTimeString());
+        
+        // ポンプ1の回転数を取得（漏液検出のため）
+        const response = await fetch('/api/get_rpm?pump=1');
+        
+        if (!response.ok) {
+          throw new Error(`HTTP error! status: ${response.status}`);
+        }
+        
+        const data = await response.json();
+        
+        if (data.success) {
+          console.log('自動回転数取得成功:', data.rpm, 'rpm');
+          
+          // 画面のRPM表示を更新
+          updateRpmDisplay(1, data.rpm);
+        } else {
+          console.log('自動回転数取得結果:', data.message);
+        }
+      } catch (error) {
+        console.error('自動回転数取得エラー:', error);
+      }
+    }
+
+    // RPM表示を更新する関数
+    function updateRpmDisplay(pumpNumber, rpm) {
+      console.log(`[DEBUG] updateRpmDisplay呼び出し: ポンプ${pumpNumber}, RPM=${rpm}`);
+      
+      const elementId = `rpmValue${pumpNumber}`;
+      console.log(`[DEBUG] 検索する要素ID: ${elementId}`);
+      
+      const rpmElement = document.getElementById(elementId);
+      console.log(`[DEBUG] 見つかった要素:`, rpmElement);
+      
+      if (rpmElement) {
+        const oldText = rpmElement.textContent;
+        rpmElement.textContent = rpm + ' rpm';
+        console.log(`[DEBUG] ポンプ${pumpNumber}のRPM表示を更新: "${oldText}" -> "${rpm} rpm"`);
+        console.log(`[DEBUG] 更新後の要素内容:`, rpmElement.textContent);
+      } else {
+        console.warn(`[ERROR] ポンプ${pumpNumber}のRPM表示要素が見つかりません (ID: ${elementId})`);
+        console.log(`[DEBUG] 利用可能な要素を検索中...`);
+        
+        // 利用可能な要素を検索
+        const allElements = document.querySelectorAll('[id*="rpm"]');
+        console.log(`[DEBUG] RPM関連の要素:`, allElements);
+        
+        const allElementsWithValue = document.querySelectorAll('[id*="Value"]');
+        console.log(`[DEBUG] Value関連の要素:`, allElementsWithValue);
+      }
+    }
+
     // ページ読み込み時に状態確認
     document.addEventListener('DOMContentLoaded', function() {
+      console.log('ページ読み込み完了 - 漏液検出監視を開始します');
+      
+      // デバッグ: 利用可能な要素を確認
+      console.log('[DEBUG] ページ読み込み時の要素確認');
+      const allRpmElements = document.querySelectorAll('[id*="rpm"]');
+      console.log('[DEBUG] RPM関連の要素:', allRpmElements);
+      
+      for (let i = 0; i < allRpmElements.length; i++) {
+        console.log(`[DEBUG] 要素${i}: id="${allRpmElements[i].id}", text="${allRpmElements[i].textContent}"`);
+      }
+      
+      // 漏液検出状態を初期化
+      window.leakDetected = false;
+      
       checkStatus();
+      checkLeakStatus();
       
       // 30秒ごとに状態確認
       setInterval(checkStatus, 30000);
+      
+      // 1秒ごとに漏液検出状態を確認
+      setInterval(checkLeakStatus, 1000);
+      
+      // 5秒ごとに自動回転数取得（漏液検出のため）
+      const autoRpmInterval = setInterval(autoGetRpm, 5000);
+      
+      console.log('漏液検出監視が開始されました');
+      console.log('自動回転数取得（5秒間隔）が開始されました');
+      console.log('setInterval ID:', autoRpmInterval);
+      
+      // 初回実行（即座に1回実行）
+      setTimeout(autoGetRpm, 1000);
     });
   </script>
 </body>

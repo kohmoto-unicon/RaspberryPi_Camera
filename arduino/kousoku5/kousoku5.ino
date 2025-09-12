@@ -86,6 +86,10 @@ const int leakSensorPins[3]    = {34, 35, 36};
 // 漏液監視用カウンタ/フラグ
 volatile uint8_t leakConsecutiveOnCount = 0; // 連続ON回数（100ms刻み）
 volatile bool leakStopRequested = false;     // 停止要求フラグ（loopで処理）
+volatile bool leakDetected = false;          // 漏液検知状態フラグ
+volatile unsigned long leakDetectionTime = 0; // 漏液検知時刻
+volatile uint8_t leakConsecutiveOffCount = 0; // 連続OFF回数（100ms刻み）
+const unsigned long LEAK_RECOVERY_TIME_MS = 5000; // 自動復帰時間（5秒）
 
 // ==== ポンプ状態管理 ====
 // ポンプの状態を定義
@@ -146,6 +150,57 @@ void stopAllPumps() {
     updatePumpState(i);
   }
   interrupts();
+}
+
+// ===================== シリアル送信表示ヘルパー関数 =====================
+// 送信データをLCDに表示する関数
+void displaySerialSend(const char* description, const byte* data, int length) {
+  lcdSetCursor(0, 1);
+  lcdPrint("SEND:");
+  
+  // データが短い場合は16進数で表示
+  if (length <= 4) {
+    for (int i = 0; i < length; i++) {
+      if (i > 0) lcdPrint(" ");
+      char hexStr[3];
+      sprintf(hexStr, "%02X", data[i]);
+      lcdPrint(hexStr);
+    }
+  } else {
+    // 長いデータの場合は説明文を表示
+//    lcdPrint(description);
+    lcdPrint((const char*)data);
+  }
+}
+
+// ===================== 漏液検出コマンド送信関数 =====================
+// 漏液発生をシリアル通信で通知する関数（10バイト形式）
+void sendLeakDetectionCommand() {
+  // 漏液検出コマンド: STX + ポンプNo + 'Z' + データ(6桁) + CS + ETX
+  byte leakCommand[10];
+  leakCommand[0] = 0x02;  // STX
+  leakCommand[1] = '0';   // ポンプ番号（漏液は全ポンプ対象なので0）
+  leakCommand[2] = 'Z';   // アクション
+  leakCommand[3] = '0';   // データ1
+  leakCommand[4] = '0';   // データ2
+  leakCommand[5] = '0';   // データ3
+  leakCommand[6] = '0';   // データ4
+  leakCommand[7] = '0';   // データ5
+  leakCommand[8] = '0';   // データ6（一時的に0を設定）
+  
+  // チェックサム計算（1-7バイト目、8バイト目はチェックサム）
+  byte checksum = 0;
+  for (int i = 1; i <= 7; i++) {
+    checksum ^= leakCommand[i];
+  }
+  leakCommand[8] = checksum;  // チェックサムを8バイト目に設定
+  
+  leakCommand[9] = 0x03;  // ETX
+  
+  Serial.write(leakCommand, 10);
+  
+  // LCD下段に送信データを表示
+  displaySerialSend("LEAK", leakCommand, 10);
 }
 
 // ===================== デバッグLED制御関数 =====================
@@ -575,16 +630,26 @@ ISR(TIMER1_COMPA_vect) {
 
   // 漏液センサ動作チェック（100msごとに実行）
   if (msCounter % 100 == 0) {
-  //  bool leakOn = isLeakDetected(0) || isLeakDetected(1) || isLeakDetected(2);
     bool leakOn = isLeakDetected(0);
     setDebugLED(leakOn);
-    if (leakOn) {
-      if (leakConsecutiveOnCount < 255) leakConsecutiveOnCount++;
-      if (leakConsecutiveOnCount >= 5) {
-        leakStopRequested = true; // 500ms間連続でON → 停止要求
+    
+    if (!leakDetected) {
+      // 漏液検知状態でない場合のみ、新しい漏液を検知
+      if (leakOn) {
+        if (leakConsecutiveOnCount < 255) leakConsecutiveOnCount++;
+        if (leakConsecutiveOnCount >= 5) {
+          leakStopRequested = true; // 500ms間連続でON → 停止要求
+        }
+      } else {
+        leakConsecutiveOnCount = 0;
       }
     } else {
-      leakConsecutiveOnCount = 0;
+      // 漏液検知状態の場合は、復帰条件をチェック
+      if (leakOn) {
+        leakConsecutiveOffCount = 0; // 漏液が続いている場合はリセット
+      } else {
+        if (leakConsecutiveOffCount < 255) leakConsecutiveOffCount++;
+      }
     }
   }
 }
@@ -857,7 +922,7 @@ void processCommand(byte* cmd) {
       response[2 + i] = dummyCurrent[i];
     }
     
-    // チェックサム計算
+    // チェックサム計算（1-7バイト目: ポンプ番号1バイト + 電流値6バイト）
     byte checksum = 0;
     for (int i = 1; i <= 7; i++) {
       checksum ^= response[i];
@@ -872,7 +937,7 @@ void processCommand(byte* cmd) {
     // LCD表示
     lcdClear();
     lcdPrint("Receive Current ");
-    lcdPrint("response");
+    displaySerialSend("CURRENT", response, 10);
   } else if (action == 'X') {  // 回転情報取得
     // STX + ポンプNo + RPM(6桁整数) + ETX + CS の形式で送信
     char response[11];
@@ -889,7 +954,7 @@ void processCommand(byte* cmd) {
       response[2 + i] = rpmStr[i];
     }
     
-    // チェックサム計算
+    // チェックサム計算（1-7バイト目: ポンプ番号1バイト + RPM6バイト）
     byte checksum = 0;
     for (int i = 1; i <= 7; i++) {
       checksum ^= response[i];
@@ -905,8 +970,9 @@ void processCommand(byte* cmd) {
     // LCD表示
     lcdClear();
     lcdPrint("Receive Rotate X");
-    lcdSetCursor(0, 1);  // 2行目に移動
-    lcdPrint(response);
+    lcdSetCursor(0, 1);
+    lcdPrint("SEND: RPM=");
+    lcdPrint(rpm);
   }
 }
 
@@ -984,9 +1050,32 @@ void loop() {
   // 漏液による全停止要求を処理（メインループ側で安全に停止）
   if (leakStopRequested) {
     leakStopRequested = false;
+    leakDetected = true;
+    leakDetectionTime = millis();
     stopAllPumps();
     // 必要ならLCDやシリアル通知を追加可能
     lcdClear();
     lcdPrint("LEAK STOP");
+    
+    // 漏液発生コマンドをシリアル送信
+    sendLeakDetectionCommand();
+  }
+  
+  // 漏液検知状態の自動復帰処理
+  if (leakDetected) {
+    unsigned long currentTime = millis();
+    
+    // 5秒経過したかチェック
+    if (currentTime - leakDetectionTime >= LEAK_RECOVERY_TIME_MS) {
+      // 5秒間連続して漏液していない場合、自動復帰
+      if (leakConsecutiveOffCount >= 50) { // 5秒 = 50回 × 100ms
+        leakDetected = false;
+        leakConsecutiveOffCount = 0;
+        lcdClear();
+        lcdPrint("LEAK RECOVERED");
+        lcdSetCursor(0, 1);
+        lcdPrint("System Ready");
+      }
+    }
   }
 }

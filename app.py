@@ -96,6 +96,10 @@ picam2 = None  # カメラインスタンス（クリーンアップ用）
 serial_initialized1 = False # ポンプ1-3用シリアル通信初期化フラグ
 serial_initialized2 = False # ポンプ4-6用シリアル通信初期化フラグ
 
+# 漏液検出状態管理
+leak_detected = False  # 漏液検出フラグ
+leak_detection_lock = threading.Lock()  # 漏液検出状態の排他制御用
+
 # シリアル通信設定（シリンジポンプ制御用）
 if IS_WINDOWS:
     SYRINGE_SERIAL_PORT = "COM22"  # Windows環境の場合（シリンジポンプ）
@@ -109,7 +113,7 @@ syringe_pump_controllers = []  # シリンジポンプ制御インスタンス�
 
 def initialize_serial():
     """シリアル通信を初期化（ハイセラポンプ）"""
-    global ser_1, ser_2, serial_initialized_1, serial_initialized_2, ser_pump1, ser_pump2
+    global ser_1, ser_2, serial_initialized1, serial_initialized2, ser_pump1, ser_pump2
     
     print(f"OS: {platform.system()}")
     print(f"シリアルポート設定:")
@@ -122,13 +126,13 @@ def initialize_serial():
         ser_1 = serial.Serial(SERIAL_PORT_1, BAUD_RATE, timeout=1)
         ser_pump1 = ser_1  # クリーンアップ用にser_pump1にも設定
         print(f"✓ ハイセラポンプ1-3用シリアル通信が正常に初期化されました: {SERIAL_PORT_1}")
-        serial_initialized_1 = True
+        serial_initialized1 = True
     except Exception as e:
         print(f"✗ ハイセラポンプ1-3用シリアル通信初期化エラー: {e}")
         if not IS_WINDOWS:
             print("   → デバイスが接続されているか確認してください")
             print("   → デバイス権限があるか確認してください（sudoが必要な場合があります）")
-        serial_initialized_1 = False
+        serial_initialized1 = False
 
     try:
         # ポンプ4-6用ポートの初期化
@@ -136,16 +140,16 @@ def initialize_serial():
         ser_2 = serial.Serial(SERIAL_PORT_2, BAUD_RATE, timeout=1)
         ser_pump2 = ser_2  # クリーンアップ用にser_pump2にも設定
         print(f"✓ ハイセラポンプ4-6用シリアル通信が正常に初期化されました: {SERIAL_PORT_2}")
-        serial_initialized_2 = True
+        serial_initialized2 = True
     except Exception as e:
         print(f"✗ ハイセラポンプ4-6用シリアル通信初期化エラー: {e}")
         if not IS_WINDOWS:
             print("   → デバイスが接続されているか確認してください")
             print("   → デバイス権限があるか確認してください（sudoが必要な場合があります）")
-        serial_initialized_2 = False
+        serial_initialized2 = False
 
     # 両方の初期化結果を返す
-    return serial_initialized_1 or serial_initialized_2    
+    return serial_initialized1 or serial_initialized2    
 
 def initialize_syringe_serial():
     """シリアル通信を初期化（シリンジポンプ）"""
@@ -174,6 +178,53 @@ def initialize_syringe_serial():
         syringe_serial_initialized = False
         return False
 
+# 漏液検出専用のチェック機能
+def check_leak_detection():
+    """漏液検出コマンドをチェックする関数（他のシリアル通信と競合しない）"""
+    global leak_detected
+    
+    # ポート1のチェック
+    if ser_1 and serial_initialized1:
+        if ser_1.in_waiting >= 10:
+            data = ser_1.read(10)
+            print(f"[LEAK CHECK] {SERIAL_PORT_1} 受信データ: {data.hex()} ({len(data)} bytes)")
+            
+            # 漏液検出コマンドのチェック
+            if len(data) >= 10 and data[0] == 0x02 and data[2] == ord('Z') and data[9] == 0x03:
+                # チェックサム検証
+                checksum = 0
+                for i in range(1, 8):
+                    checksum ^= data[i]
+                
+                if checksum == data[8]:
+                    print(f"[LEAK CHECK] 漏液検出コマンドを受信: {data.hex()}")
+                    with leak_detection_lock:
+                        leak_detected = True
+                    print("漏液検出コマンドを受信しました！")
+                    return True
+    
+    # ポート2のチェック
+    if ser_2 and serial_initialized2:
+        if ser_2.in_waiting >= 10:
+            data = ser_2.read(10)
+            print(f"[LEAK CHECK] {SERIAL_PORT_2} 受信データ: {data.hex()} ({len(data)} bytes)")
+            
+            # 漏液検出コマンドのチェック
+            if len(data) >= 10 and data[0] == 0x02 and data[2] == ord('Z') and data[9] == 0x03:
+                # チェックサム検証
+                checksum = 0
+                for i in range(1, 8):
+                    checksum ^= data[i]
+                
+                if checksum == data[8]:
+                    print(f"[LEAK CHECK] 漏液検出コマンドを受信: {data.hex()}")
+                    with leak_detection_lock:
+                        leak_detected = True
+                    print("漏液検出コマンドを受信しました！")
+                    return True
+    
+    return False
+
 def calc_checksum(data_bytes):
     """チェックサムを計算"""
     checksum = 0
@@ -183,10 +234,10 @@ def calc_checksum(data_bytes):
 
 def send_serial_command(pump_no, action, value="000000"):
     """シリアルコマンドを送信"""
-    if (pump_no < 4) and (not serial_initialized_1):
+    if (pump_no < 4) and (not serial_initialized1):
         print("シリアル通信1が初期化されていません")
         return False
-    if (pump_no > 3) and (not serial_initialized_2):
+    if (pump_no > 3) and (not serial_initialized2):
         print("シリアル通信2が初期化されていません")
         return False
     
@@ -797,12 +848,37 @@ def api_status():
     
     return jsonify({
         'camera': camera_info,
-        'serial_initialized_1': serial_initialized_1,  # ハイセラポンプ1-3
-        'serial_initialized_2': serial_initialized_2,  # ハイセラポンプ4-6
+        'serial_initialized1': serial_initialized1,  # ハイセラポンプ1-3
+        'serial_initialized2': serial_initialized2,  # ハイセラポンプ4-6
         'syringe_serial_initialized': syringe_serial_initialized,
-        'hysera_port1_status': serial_initialized_1 and ser_1 is not None,  # COM18（ポンプ1-3）
-        'hysera_port2_status': serial_initialized_2 and ser_2 is not None,  # COM20（ポンプ4-6）
+        'hysera_port1_status': serial_initialized1 and ser_1 is not None,  # COM18（ポンプ1-3）
+        'hysera_port2_status': serial_initialized2 and ser_2 is not None,  # COM20（ポンプ4-6）
+        'leak_detected': leak_detected,  # 漏液検出状態
         'timestamp': time.time()
+    })
+
+@app.route('/api/check_leak')
+def api_check_leak():
+    """漏液検出をチェックするAPI"""
+    leak_found = check_leak_detection()
+    return jsonify({
+        'success': True,
+        'leak_detected': leak_detected,
+        'leak_found_this_check': leak_found,
+        'message': '漏液検出チェック完了'
+    })
+
+@app.route('/api/reset_leak')
+def api_reset_leak():
+    """漏液検出状態をリセットするAPI"""
+    global leak_detected
+    with leak_detection_lock:
+        leak_detected = False
+    print("漏液検出状態をリセットしました")
+    return jsonify({
+        'success': True,
+        'message': '漏液検出状態をリセットしました',
+        'leak_detected': leak_detected
     })
 
 @app.route('/api/snapshot')
@@ -1050,14 +1126,39 @@ def api_get_current():
             'command_bytes': list(cmd)
         })
     
+    print(f"[{port_name}] 電流取得コマンド送信: {cmd.hex()}")
+    
+    # 漏液チェックを先に実行
+    check_leak_detection()
+    
     while time.time() - start_time < 1.0:
         if target_ser.in_waiting >= 10:  # 10バイトの応答を待機
             response = target_ser.read(10)
+            print(f"[{port_name}] 電流取得応答受信: {response.hex()} ({len(response)} bytes)")
             break
         time.sleep(0.01)
     
     if response and len(response) == 10:
-        # 応答フォーマット: STX + ポンプNo + 電流値(符号+5桁整数) + CS + ETX
+        # 漏液検出コマンドのチェック（STX + ポンプNo + 'Z' + データ + CS + ETX）
+        if response[0] == 0x02 and response[2] == ord('Z') and response[9] == 0x03:
+            # チェックサム検証
+            checksum = 0
+            for i in range(1, 8):
+                checksum ^= response[i]
+            
+            if checksum == response[8]:
+                print(f"[{port_name}] 漏液検出コマンドを受信: {response.hex()}")
+                with leak_detection_lock:
+                    leak_detected = True
+                print("漏液検出コマンドを受信しました！")
+                return jsonify({
+                    'success': False,
+                    'current': 0,
+                    'message': '漏液検出により処理を中断',
+                    'command_bytes': list(cmd)
+                })
+        
+        # 電流応答の処理（STX + ポンプNo + 電流値(符号+5桁整数) + CS + ETX）
         if response[0] == 0x02 and response[9] == 0x03:
             # チェックサム検証
             checksum = 0
@@ -1161,14 +1262,39 @@ def api_get_rpm():
             'command_bytes': list(cmd)
         })
     
+    print(f"[{port_name}] 回転数取得コマンド送信: {cmd.hex()}")
+    
+    # 漏液チェックを先に実行
+    check_leak_detection()
+    
     while time.time() - start_time < 1.0:
         if target_ser.in_waiting >= 10:  # 10バイトの応答を待機
             response = target_ser.read(10)
+            print(f"[{port_name}] 回転数取得応答受信: {response.hex()} ({len(response)} bytes)")
             break
         time.sleep(0.01)
     
     if response and len(response) == 10:
-        # 応答フォーマット: STX + ポンプNo + RPM(6桁整数) + CS + ETX
+        # 漏液検出コマンドのチェック（STX + ポンプNo + 'Z' + データ + CS + ETX）
+        if response[0] == 0x02 and response[2] == ord('Z') and response[9] == 0x03:
+            # チェックサム検証
+            checksum = 0
+            for i in range(1, 8):
+                checksum ^= response[i]
+            
+            if checksum == response[8]:
+                print(f"[{port_name}] 漏液検出コマンドを受信: {response.hex()}")
+                with leak_detection_lock:
+                    leak_detected = True
+                print("漏液検出コマンドを受信しました！")
+                return jsonify({
+                    'success': False,
+                    'rpm': 0,
+                    'message': '漏液検出により処理を中断',
+                    'command_bytes': list(cmd)
+                })
+        
+        # 回転数応答の処理（STX + ポンプNo + RPM(6桁整数) + CS + ETX）
         if response[0] == 0x02 and response[9] == 0x03:
             # チェックサム検証
             checksum = 0
@@ -1640,6 +1766,22 @@ if __name__ == '__main__':
         else:
             print("✗ FFmpegストリーミングの自動開始に失敗しました")
             print("  MJPEGストリーミングを使用します")
+    
+    # シリアル通信監視スレッドを開始
+    print(f"シリアル通信初期化結果: serial_success={serial_success}")
+    print(f"シリアルポート1状態: serial_initialized1={serial_initialized1}")
+    print(f"シリアルポート2状態: serial_initialized2={serial_initialized2}")
+    
+    # シリアル監視スレッドは削除（他のシリアル通信との競合を避けるため）
+    if serial_success:
+        print("✓ シリアル通信初期化完了")
+    else:
+        print("⚠ シリアル通信初期化に失敗")
+    
+    # Flaskのログレベルを調整（APIアクセスログを非表示）
+    import logging
+    log = logging.getLogger('werkzeug')
+    log.setLevel(logging.WARNING)
     
     # 開発サーバー起動（本番環境ではgunicorn等を使用）
     app.run(host=args.host, port=args.port, debug=args.debug, threaded=True)
