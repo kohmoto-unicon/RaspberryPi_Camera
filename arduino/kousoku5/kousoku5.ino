@@ -370,7 +370,7 @@ inline unsigned int spsToIntervalUs(float sps) {
 // ===================== センサ読み出しユーティリティ =====================
 inline bool isLeakDetected(int idx) {
   // INPUT_PULLUPのため、漏液検出時はLOWとする想定
-  return digitalRead(leakSensorPins[idx]) == LOW;
+  return digitalRead(leakSensorPins[idx]) == HIGH;
 }
 
 // ===================== ステップトグル関数 =====================
@@ -575,7 +575,8 @@ ISR(TIMER1_COMPA_vect) {
 
   // 漏液センサ動作チェック（100msごとに実行）
   if (msCounter % 100 == 0) {
-    bool leakOn = isLeakDetected(0) || isLeakDetected(1) || isLeakDetected(2);
+  //  bool leakOn = isLeakDetected(0) || isLeakDetected(1) || isLeakDetected(2);
+    bool leakOn = isLeakDetected(0);
     setDebugLED(leakOn);
     if (leakOn) {
       if (leakConsecutiveOnCount < 255) leakConsecutiveOnCount++;
