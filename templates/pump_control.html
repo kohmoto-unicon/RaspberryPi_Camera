@@ -344,6 +344,12 @@
     🚨 漏液発生！ 🚨
     <button class="leak-reset-btn" onclick="resetLeakAlert()">リセット</button>
   </div>
+  
+  <!-- 自動送信状態表示 -->
+  <div style="position: fixed; top: 10px; right: 10px; background: rgba(0,0,0,0.8); color: white; padding: 10px; border-radius: 5px; font-size: 14px; z-index: 1000;">
+    自動送信状態: <span id="autoSendingStatus">待機中</span>
+    <button onclick="resetAutoSendingStatus()" style="margin-left: 10px; padding: 2px 6px; font-size: 12px;">リセット</button>
+  </div>
 
   <div class="container">
     <div class="header">
@@ -488,6 +494,14 @@
 
     // RPM取得
     async function getRPM(pump){
+      console.log(`[DEBUG] getRPM呼び出し: ポンプ${pump}, isAutoSending=${isAutoSending}`);
+      
+      if (isAutoSending) {
+        console.log('自動送信中のため、手動RPM取得をスキップします');
+        alert('自動送信中です。しばらくお待ちください。');
+        return;
+      }
+      
       try {
         console.log(`[DEBUG] getRPM呼び出し: ポンプ${pump}`);
         const response = await fetch(`/api/get_rpm?pump=${pump}`);
@@ -522,6 +536,14 @@
 
     // ポンプコマンド送信
     async function sendPumpCommand(pump, action, value = "000000", microstepState = "0") {
+      console.log(`[DEBUG] sendPumpCommand呼び出し: ポンプ${pump}, アクション${action}, isAutoSending=${isAutoSending}`);
+      
+      if (isAutoSending) {
+        console.log('自動送信中のため、ポンプコマンド送信をスキップします');
+        alert('自動送信中です。しばらくお待ちください。');
+        return;
+      }
+      
       try {
         const response = await fetch(`/api/pump_control?pump=${pump}&action=${action}&value=${value}&microstep=${microstepState}`);
         const data = await response.json();
@@ -639,9 +661,57 @@
       }
     }
 
+    // 自動送信状態を管理するフラグ
+    let isAutoSending = false;
+    let autoSendingTimeout = null;
+    
+    // 自動送信状態の表示を更新
+    function updateAutoSendingStatus() {
+      const statusElement = document.getElementById('autoSendingStatus');
+      if (statusElement) {
+        if (isAutoSending) {
+          statusElement.textContent = '自動送信中...';
+          statusElement.style.color = 'orange';
+        } else {
+          statusElement.textContent = '待機中';
+          statusElement.style.color = 'green';
+        }
+      }
+    }
+    
+    // 自動送信状態を手動でリセット（デバッグ用）
+    function resetAutoSendingStatus() {
+      console.log('[DEBUG] 自動送信状態を手動でリセットします');
+      isAutoSending = false;
+      if (autoSendingTimeout) {
+        clearTimeout(autoSendingTimeout);
+        autoSendingTimeout = null;
+      }
+      updateAutoSendingStatus();
+      console.log('[DEBUG] 自動送信状態をリセットしました');
+    }
+    
     // 回転数取得を自動実行（漏液検出のため）
     async function autoGetRpm() {
+      if (isAutoSending) {
+        console.log('自動送信中のため、スキップします');
+        return;
+      }
+      
       try {
+        isAutoSending = true;
+        updateAutoSendingStatus();
+        
+        // タイムアウト設定（10秒で強制リセット）
+        if (autoSendingTimeout) {
+          clearTimeout(autoSendingTimeout);
+        }
+        autoSendingTimeout = setTimeout(() => {
+          console.warn('[WARNING] 自動送信がタイムアウトしました。強制リセットします。');
+          isAutoSending = false;
+          updateAutoSendingStatus();
+        }, 10000);
+        
         console.log('自動回転数取得を実行中...', new Date().toLocaleTimeString());
         
         // ポンプ1の回転数を取得（漏液検出のため）
@@ -663,6 +733,13 @@
         }
       } catch (error) {
         console.error('自動回転数取得エラー:', error);
+      } finally {
+        isAutoSending = false;
+        if (autoSendingTimeout) {
+          clearTimeout(autoSendingTimeout);
+          autoSendingTimeout = null;
+        }
+        updateAutoSendingStatus();
       }
     }
 
@@ -709,6 +786,10 @@
       
       // 漏液検出状態を初期化
       window.leakDetected = false;
+      
+      // 自動送信状態を初期化
+      isAutoSending = false;
+      updateAutoSendingStatus();
       
       checkStatus();
       checkLeakStatus();
