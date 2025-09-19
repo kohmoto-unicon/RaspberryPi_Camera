@@ -611,16 +611,22 @@
     function updateLeakAlert() {
       const leakAlert = document.getElementById('leakAlert');
       if (leakAlert) {
-        console.log('漏液アラート更新:', window.leakDetected, '抑制フラグ:', window.leakAlertSuppressed);
+        console.log('=== updateLeakAlert() 呼び出し ===');
+        console.log('漏液検出状態:', window.leakDetected);
+        console.log('抑制フラグ:', window.leakAlertSuppressed);
         
         // 漏液検出状態かつ抑制フラグがfalseの場合のみ表示
         if (window.leakDetected && !window.leakAlertSuppressed) {
           leakAlert.classList.add('show');
-          console.log('漏液アラートを表示しました');
+          console.log('✓ 漏液アラートを表示しました');
         } else {
           leakAlert.classList.remove('show');
-          console.log('漏液アラートを非表示にしました');
+          console.log('✗ 漏液アラートを非表示にしました');
         }
+        
+        // 現在のクラス状態を確認
+        console.log('現在のクラス:', leakAlert.className);
+        console.log('showクラスがあるか:', leakAlert.classList.contains('show'));
       } else {
         console.error('漏液アラート要素が見つかりません');
       }
@@ -629,23 +635,16 @@
     // 漏液検出状態をリセット
     async function resetLeakAlert() {
       try {
-        console.log('漏液アラートをリセット中...');
+        console.log('=== リセットボタンが押されました ===');
+        console.log('リセット前の状態 - 漏液検出:', window.leakDetected, '抑制フラグ:', window.leakAlertSuppressed);
         
         // アラート表示を抑制（次回検知するまで非表示）
         window.leakAlertSuppressed = true;
+        console.log('抑制フラグをtrueに設定しました');
         updateLeakAlert();
         
-        // サーバー側もリセット
-        const response = await fetch('/api/reset_leak', {
-          method: 'POST'
-        });
-        const data = await response.json();
-        
-        if (data.success) {
-          console.log('漏液検出状態をリセットしました:', data.message);
-        } else {
-          console.error('漏液検出状態のリセットに失敗:', data.message);
-        }
+        // サーバー側はリセットしない（漏液状態を維持）
+        console.log('サーバー側の漏液状態は維持します（抑制フラグのみで制御）');
         
       } catch (error) {
         console.error('通信エラー:', error);
@@ -659,22 +658,33 @@
         const data = await response.json();
         
         console.log('漏液検出状態確認:', data.leak_detected);
+        console.log('現在のフロントエンド状態 - 漏液検出:', window.leakDetected, '抑制フラグ:', window.leakAlertSuppressed);
         
         if (data.leak_detected !== undefined) {
           const wasLeakDetected = window.leakDetected;
           window.leakDetected = data.leak_detected;
           
+          // 漏液検出状態が変更された場合
           if (window.leakDetected !== wasLeakDetected) {
             console.log('漏液検出状態が変更されました:', wasLeakDetected, '->', window.leakDetected);
             
             // 新しい漏液検出があった場合、抑制フラグをリセット
             if (window.leakDetected && !wasLeakDetected) {
+              console.log('=== 新しい漏液検出を検出 ===');
+              console.log('抑制フラグをリセット前:', window.leakAlertSuppressed);
               window.leakAlertSuppressed = false;
+              window.lastLeakDetectionTime = Date.now();
+              console.log('抑制フラグをリセット後:', window.leakAlertSuppressed);
               console.log('新しい漏液検出のため、抑制フラグをリセットしました');
             }
-            
-            updateLeakAlert();
+          } else if (window.leakDetected && window.leakAlertSuppressed) {
+            // 漏液状態が継続しているが、抑制フラグがtrueの場合
+            // これは新しい漏液検出ではないので、抑制フラグはリセットしない
+            console.log('漏液状態は継続中ですが、抑制フラグがtrueのため表示しません');
           }
+          
+          // 状態が変更された場合も、変更されなかった場合も、アラート表示を更新
+          updateLeakAlert();
         }
       } catch (error) {
         console.error('漏液検出状態確認エラー:', error);
@@ -807,6 +817,7 @@
       // 漏液検出状態を初期化
       window.leakDetected = false;  // 実際の漏液検出状態
       window.leakAlertSuppressed = false;  // アラート表示抑制フラグ
+      window.lastLeakDetectionTime = 0;  // 最後の漏液検出時刻を追跡
       
       // 自動送信状態を初期化
       isAutoSending = false;
