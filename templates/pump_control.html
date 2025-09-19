@@ -621,20 +621,32 @@
     // 漏液検出状態をリセット
     async function resetLeakAlert() {
       try {
+        console.log('漏液検出状態をリセット中...');
+        
+        // まずフロントエンド側で即座にリセット
+        window.leakDetected = false;
+        updateLeakAlert();
+        
+        // サーバー側もリセット
         const response = await fetch('/api/reset_leak', {
           method: 'POST'
         });
         const data = await response.json();
         
         if (data.success) {
-          window.leakDetected = false;
+          console.log('漏液検出状態をリセットしました:', data.message);
+          // サーバー側の状態も確認して同期
+          window.leakDetected = data.leak_detected;
           updateLeakAlert();
-          console.log('漏液検出状態をリセットしました');
         } else {
           console.error('漏液検出状態のリセットに失敗:', data.message);
+          // リセットに失敗した場合はサーバー側の状態を再確認
+          await checkLeakStatus();
         }
       } catch (error) {
         console.error('通信エラー:', error);
+        // エラーの場合もサーバー側の状態を再確認
+        await checkLeakStatus();
       }
     }
 
@@ -652,9 +664,11 @@
           
           if (window.leakDetected !== wasLeakDetected) {
             console.log('漏液検出状態が変更されました:', wasLeakDetected, '->', window.leakDetected);
+            updateLeakAlert();
+          } else {
+            // 状態が変わらない場合も、表示を同期させる
+            updateLeakAlert();
           }
-          
-          updateLeakAlert();
         }
       } catch (error) {
         console.error('漏液検出状態確認エラー:', error);
