@@ -164,12 +164,12 @@ void openValve(int valveNumber) {
   if (valveNumber >= 1 && valveNumber <= 3) {
     int idx = valveNumber - 1; // 配列インデックス（0-2）
     digitalWrite(valvePins[idx], HIGH);
-    Serial.print("バルブ");
-    Serial.print(valveNumber);
-    Serial.println("を開きました（ON）");
+    //Serial.print("バルブ");
+    //Serial.print(valveNumber);
+    //Serial.println("を開きました（ON）");
   } else {
-    Serial.print("無効なバルブ番号: ");
-    Serial.println(valveNumber);
+    //Serial.print("無効なバルブ番号: ");
+    //Serial.println(valveNumber);
   }
 }
 
@@ -178,12 +178,12 @@ void closeValve(int valveNumber) {
   if (valveNumber >= 1 && valveNumber <= 3) {
     int idx = valveNumber - 1; // 配列インデックス（0-2）
     digitalWrite(valvePins[idx], LOW);
-    Serial.print("バルブ");
-    Serial.print(valveNumber);
-    Serial.println("を閉じました（OFF）");
+    //Serial.print("バルブ");
+    //Serial.print(valveNumber);
+    //Serial.println("を閉じました（OFF）");
   } else {
-    Serial.print("無効なバルブ番号: ");
-    Serial.println(valveNumber);
+    //Serial.print("無効なバルブ番号: ");
+    //Serial.println(valveNumber);
   }
 }
 
@@ -192,7 +192,7 @@ void closeAllValves() {
   for (int i = 0; i < 3; i++) {
     digitalWrite(valvePins[i], LOW);
   }
-  Serial.println("全バルブを閉じました（OFF）");
+  //Serial.println("全バルブを閉じました（OFF）");
 }
 
 // バルブの状態を取得

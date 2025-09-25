@@ -1259,7 +1259,9 @@ def api_get_rpm():
     while time.time() - start_time < 1.0:
         if target_ser.in_waiting >= 10:  # 10バイトの応答を待機
             response = target_ser.read(10)
-            print(f"[{port_name}] 回転数取得応答受信: {response.hex()} ({len(response)} bytes)")
+            # 1バイト毎に空白を入れて表示
+            hex_str = ' '.join([f'{b:02X}' for b in response])
+            print(f"[{port_name}] 回転数取得応答受信: {hex_str} ({len(response)} bytes)")
             break
         time.sleep(0.01)
     
