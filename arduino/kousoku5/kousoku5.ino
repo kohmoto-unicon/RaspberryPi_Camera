@@ -40,6 +40,9 @@ const int stepPins[3] = {22, 25, 28};  // M1〜M3 STEP (PUL+)
 const int dirPins[3]  = {23, 26, 29};  // M1〜M3 DIR  (DIR+)
 const int enaPins[3]  = {24, 27, 30};  // M1〜M3 ENA  (ENA+)
 
+// ==== バルブ制御ピン設定 ====
+const int valvePins[3] = {40, 41, 42}; // バルブ制御ポート1,2,3
+
 // ==== 基本モータ設定 ====
 const int MICRO_STEP_1_2 = 2; // 1/2ステップ
 const int MICRO_STEP_1_4 = 4; // 1/4ステップ
@@ -150,6 +153,52 @@ void stopAllPumps() {
     updatePumpState(i);
   }
   interrupts();
+}
+
+// ===================== バルブ制御関数 =====================
+// バルブを開く（ポートON）
+void openValve(int valveNumber) {
+  if (valveNumber >= 1 && valveNumber <= 3) {
+    int idx = valveNumber - 1; // 配列インデックス（0-2）
+    digitalWrite(valvePins[idx], HIGH);
+    Serial.print("バルブ");
+    Serial.print(valveNumber);
+    Serial.println("を開きました（ON）");
+  } else {
+    Serial.print("無効なバルブ番号: ");
+    Serial.println(valveNumber);
+  }
+}
+
+// バルブを閉じる（ポートOFF）
+void closeValve(int valveNumber) {
+  if (valveNumber >= 1 && valveNumber <= 3) {
+    int idx = valveNumber - 1; // 配列インデックス（0-2）
+    digitalWrite(valvePins[idx], LOW);
+    Serial.print("バルブ");
+    Serial.print(valveNumber);
+    Serial.println("を閉じました（OFF）");
+  } else {
+    Serial.print("無効なバルブ番号: ");
+    Serial.println(valveNumber);
+  }
+}
+
+// 全バルブを閉じる
+void closeAllValves() {
+  for (int i = 0; i < 3; i++) {
+    digitalWrite(valvePins[i], LOW);
+  }
+  Serial.println("全バルブを閉じました（OFF）");
+}
+
+// バルブの状態を取得
+bool getValveState(int valveNumber) {
+  if (valveNumber >= 1 && valveNumber <= 3) {
+    int idx = valveNumber - 1; // 配列インデックス（0-2）
+    return digitalRead(valvePins[idx]) == HIGH;
+  }
+  return false;
 }
 
 // ===================== シリアル送信表示ヘルパー関数 =====================
@@ -973,6 +1022,50 @@ void processCommand(byte* cmd) {
     lcdSetCursor(0, 1);
     lcdPrint("SEND: RPM=");
     lcdPrint(rpm);
+  } else if (action == 'o') {  // バルブ開く
+    openValve(pumpNo);
+    // LCD表示
+    lcdClear();
+    lcdPrint("Valve Open");
+  } else if (action == 'q') {  // バルブ閉じる
+    closeValve(pumpNo);
+    // LCD表示
+    lcdClear();
+    lcdPrint("Valve Close");
+  } else if (action == 'Q') {  // 全バルブ閉じる
+    closeAllValves();
+    // LCD表示
+    lcdClear();
+    lcdPrint("All Valves Close");
+  } else if (action == 'G') {  // バルブ状態取得
+    bool valveState = getValveState(pumpNo);
+    // STX + ポンプNo + 状態(1桁: 0=Close, 1=Open) + データ(5桁) + CS + ETX の形式で送信
+    char response[11];
+    response[0] = 0x02;  // STX
+    response[1] = pumpNo + '0';  // ポンプ番号
+    response[2] = valveState ? '1' : '0';  // バルブ状態
+    response[3] = '0';  // データ1
+    response[4] = '0';  // データ2
+    response[5] = '0';  // データ3
+    response[6] = '0';  // データ4
+    response[7] = '0';  // データ5
+    
+    // チェックサム計算（1-7バイト目）
+    byte checksum = 0;
+    for (int i = 1; i <= 7; i++) {
+      checksum ^= response[i];
+    }
+    response[8] = checksum;
+    
+    response[9] = 0x03;  // ETX
+    
+    // 応答を送信
+    Serial.write(response, 10);
+    
+    // LCD表示
+    lcdClear();
+    lcdPrint("Valve Status");
+    displaySerialSend("VALVE", response, 10);
   }
 }
 
@@ -998,6 +1091,12 @@ void setup() {
   // 漏液センサピン設定
   for (int i = 0; i < 3; i++) {
     pinMode(leakSensorPins[i], INPUT_PULLUP);
+  }
+
+  // バルブ制御ピン設定
+  for (int i = 0; i < 3; i++) {
+    pinMode(valvePins[i], OUTPUT);
+    digitalWrite(valvePins[i], LOW); // 初期状態はClose（OFF）
   }
 
   // デバッグLEDピン設定
@@ -1043,7 +1142,18 @@ void loop() {
       commandIndex = 0;
     }
   }
-  
+/*  
+  //Test Valve - 1秒おきにバルブ1を開閉
+  static unsigned long lastValveToggle = 0;
+  if (millis() - lastValveToggle >= 1000) {
+    lastValveToggle = millis();
+    if (getValveState(1)){
+      closeValve(1);
+    } else {
+      openValve(1);
+    }
+  }
+*/
   // LCD表示更新
   lcdUpdateDisplay();
 
