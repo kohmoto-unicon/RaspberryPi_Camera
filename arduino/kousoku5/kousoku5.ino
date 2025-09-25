@@ -1061,18 +1061,6 @@ void loop() {
     sendLeakDetectionCommand();
   }
   
-  // 漏液検出状態が継続している場合、定期的に漏液検出コマンドを送信
-  if (leakDetected) {
-    static unsigned long lastLeakCommandTime = 0;
-    unsigned long currentTime = millis();
-    
-    // 1秒間隔で漏液検出コマンドを送信
-    if (currentTime - lastLeakCommandTime >= 1000) {
-      sendLeakDetectionCommand();
-      lastLeakCommandTime = currentTime;
-    }
-  }
-  
   // 漏液検知状態の自動復帰処理
   if (leakDetected) {
     unsigned long currentTime = millis();

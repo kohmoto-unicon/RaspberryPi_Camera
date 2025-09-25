@@ -868,17 +868,25 @@ def api_check_leak():
         'message': '漏液検出チェック完了'
     })
 
-@app.route('/api/reset_leak')
+@app.route('/api/reset_leak', methods=['POST'])
 def api_reset_leak():
     """漏液検出状態をリセットするAPI"""
     global leak_detected
+    
+    # 漏液検出状態を強制的にリセット
     with leak_detection_lock:
         leak_detected = False
-    print("漏液検出状態をリセットしました")
+        print(f"漏液検出状態をリセットしました: {leak_detected}")
+    
+    # リセット後の状態を確認
+    with leak_detection_lock:
+        current_leak_status = leak_detected
+        print(f"リセット後の漏液検出状態: {current_leak_status}")
+    
     return jsonify({
         'success': True,
         'message': '漏液検出状態をリセットしました',
-        'leak_detected': leak_detected
+        'leak_detected': current_leak_status
     })
 
 @app.route('/api/snapshot')
@@ -1139,25 +1147,6 @@ def api_get_current():
         time.sleep(0.01)
     
     if response and len(response) == 10:
-        # 漏液検出コマンドのチェック（STX + ポンプNo + 'Z' + データ + CS + ETX）
-        if response[0] == 0x02 and response[2] == ord('Z') and response[9] == 0x03:
-            # チェックサム検証
-            checksum = 0
-            for i in range(1, 8):
-                checksum ^= response[i]
-            
-            if checksum == response[8]:
-                print(f"[{port_name}] 漏液検出コマンドを受信: {response.hex()}")
-                with leak_detection_lock:
-                    leak_detected = True
-                print("漏液検出コマンドを受信しました！")
-                return jsonify({
-                    'success': False,
-                    'current': 0,
-                    'message': '漏液検出により処理を中断',
-                    'command_bytes': list(cmd)
-                })
-        
         # 電流応答の処理（STX + ポンプNo + 電流値(符号+5桁整数) + CS + ETX）
         if response[0] == 0x02 and response[9] == 0x03:
             # チェックサム検証
@@ -1275,25 +1264,6 @@ def api_get_rpm():
         time.sleep(0.01)
     
     if response and len(response) == 10:
-        # 漏液検出コマンドのチェック（STX + ポンプNo + 'Z' + データ + CS + ETX）
-        if response[0] == 0x02 and response[2] == ord('Z') and response[9] == 0x03:
-            # チェックサム検証
-            checksum = 0
-            for i in range(1, 8):
-                checksum ^= response[i]
-            
-            if checksum == response[8]:
-                print(f"[{port_name}] 漏液検出コマンドを受信: {response.hex()}")
-                with leak_detection_lock:
-                    leak_detected = True
-                print("漏液検出コマンドを受信しました！")
-                return jsonify({
-                    'success': False,
-                    'rpm': 0,
-                    'message': '漏液検出により処理を中断',
-                    'command_bytes': list(cmd)
-                })
-        
         # 回転数応答の処理（STX + ポンプNo + RPM(6桁整数) + CS + ETX）
         if response[0] == 0x02 and response[9] == 0x03:
             # チェックサム検証
