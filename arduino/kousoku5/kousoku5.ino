@@ -153,6 +153,9 @@ void stopAllPumps() {
     updatePumpState(i);
   }
   interrupts();
+  
+  // 全ポンプ停止後に全バルブを閉じる
+  closeAllValves();
 }
 
 // ===================== バルブ制御関数 =====================
@@ -492,6 +495,9 @@ inline void handleStep(int idx) {
         motorEnabled[idx] = false;
         planActive[idx] = false;
         updatePumpState(idx); // ポンプ状態を更新
+        
+        // ポンプ自動停止後にバルブを閉じる
+        closeValve(idx + 1); // idxは0-2、バルブ番号は1-3
       }
     }
 
@@ -805,6 +811,10 @@ void processCommand(byte* cmd) {
   long value = atol(numStr);
 
   if (action == 'M') {  // モータ開始 (0=無限動作)
+    // ポンプ開始前にバルブを開く
+    openValve(pumpNo);
+    //delay(100); // バルブ開く時間を確保
+    
     digitalWrite(enaPins[idx], LOW); // 励磁ON
     remainingSteps[idx] = (value > 0) ? value : 0;
     motorEnabled[idx] = true;
@@ -895,6 +905,11 @@ void processCommand(byte* cmd) {
     planActive[idx] = false;
     planStepsDone[idx] = 0;
     updatePumpState(idx); // ポンプ状態を更新
+    
+    // ポンプ停止後にバルブを閉じる
+    //delay(100); // ポンプ停止時間を確保
+    closeValve(pumpNo);
+    
     // LCD表示
     lcdClear();
     lcdPrint("Receive Stop");
@@ -939,6 +954,10 @@ void processCommand(byte* cmd) {
   } else if (action == 'D') {  // Enable OFF
     digitalWrite(enaPins[idx], HIGH);
     updatePumpState(idx); // ポンプ状態を更新
+    
+    // Enable OFF後にバルブを閉じる
+    closeValve(pumpNo);
+    
     // LCD表示
     lcdClear();
     lcdPrint("ReceiveEnableOFF");
