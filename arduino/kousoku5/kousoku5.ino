@@ -106,6 +106,144 @@ enum PumpState {
 // 3台のポンプの状態を格納する配列
 volatile PumpState pumpStates[3] = {PUMP_STOPPED, PUMP_STOPPED, PUMP_STOPPED};
 
+// ==== Valve制御遅延管理 ====
+// Valve制御の遅延タイプ
+enum ValveDelayType {
+  VALVE_DELAY_NONE = 0,        // 遅延なし
+  VALVE_DELAY_OPEN_BEFORE = 1, // モーター開始前のValve開放遅延
+  VALVE_DELAY_CLOSE_AFTER = 2  // モーター停止後のValve閉鎖遅延
+};
+
+// Valve制御遅延管理構造体
+struct ValveDelayManager {
+  volatile bool active;                    // 遅延処理がアクティブか
+  volatile ValveDelayType delayType;      // 遅延タイプ
+  volatile int pumpIndex;                 // 対象ポンプインデックス（0-2）
+  volatile unsigned long startTime;       // 遅延開始時刻
+  volatile unsigned long delayDuration;   // 遅延時間（ミリ秒）
+  volatile bool valveActionPending;       // Valve操作が待機中か
+  volatile bool motorActionPending;       // モーター操作が待機中か
+  volatile bool valveState;               // 実行予定のValve状態（true=開く、false=閉じる）
+  volatile bool motorEnable;              // 実行予定のモーター状態（true=開始、false=停止）
+  volatile unsigned long remainingSteps;  // 実行予定の残ステップ数
+};
+
+// 3台のポンプ用のValve遅延管理配列
+volatile ValveDelayManager valveDelayManagers[3] = {
+  {false, VALVE_DELAY_NONE, 0, 0, 0, false, false, false, false, 0},
+  {false, VALVE_DELAY_NONE, 0, 0, 0, false, false, false, false, 0},
+  {false, VALVE_DELAY_NONE, 0, 0, 0, false, false, false, false, 0}
+};
+
+// Valve制御遅延時間定数（ミリ秒）
+const unsigned long VALVE_DELAY_MS = 500; // 0.5秒
+
+// ===================== Valve遅延管理関数 =====================
+// Valve遅延管理を開始する関数
+void startValveDelay(int pumpIdx, ValveDelayType delayType, bool valveState, bool motorEnable, unsigned long steps = 0) {
+  if (pumpIdx < 0 || pumpIdx >= 3) return;
+  
+  noInterrupts();
+  valveDelayManagers[pumpIdx].active = true;
+  valveDelayManagers[pumpIdx].delayType = delayType;
+  valveDelayManagers[pumpIdx].pumpIndex = pumpIdx;
+  valveDelayManagers[pumpIdx].startTime = msCounter;
+  valveDelayManagers[pumpIdx].delayDuration = VALVE_DELAY_MS;
+  valveDelayManagers[pumpIdx].valveActionPending = true;
+  valveDelayManagers[pumpIdx].motorActionPending = true;
+  valveDelayManagers[pumpIdx].valveState = valveState;
+  valveDelayManagers[pumpIdx].motorEnable = motorEnable;
+  valveDelayManagers[pumpIdx].remainingSteps = steps;
+  interrupts();
+}
+
+// Valve遅延管理を停止する関数
+void stopValveDelay(int pumpIdx) {
+  if (pumpIdx < 0 || pumpIdx >= 3) return;
+  
+  noInterrupts();
+  valveDelayManagers[pumpIdx].active = false;
+  valveDelayManagers[pumpIdx].delayType = VALVE_DELAY_NONE;
+  valveDelayManagers[pumpIdx].valveActionPending = false;
+  valveDelayManagers[pumpIdx].motorActionPending = false;
+  interrupts();
+}
+
+// Valve遅延処理を実行する関数（1msタイマーから呼び出される）
+void processValveDelays() {
+  for (int i = 0; i < 3; i++) {
+    if (!valveDelayManagers[i].active) continue;
+    
+    unsigned long elapsed = msCounter - valveDelayManagers[i].startTime;
+    
+    if (valveDelayManagers[i].delayType == VALVE_DELAY_OPEN_BEFORE) {
+      // モーター開始前のValve開放遅延
+      if (valveDelayManagers[i].valveActionPending) {
+        // Valve操作を即座に実行
+        if (valveDelayManagers[i].valveState) {
+          openValve(i + 1); // ポンプ番号は1-3
+        } else {
+          closeValve(i + 1);
+        }
+        valveDelayManagers[i].valveActionPending = false;
+        // 遅延タイマーをリセット（Valve操作後から0.5秒後にモーター開始）
+        valveDelayManagers[i].startTime = msCounter;
+      } else if (elapsed >= valveDelayManagers[i].delayDuration && valveDelayManagers[i].motorActionPending) {
+        // 0.5秒遅延後にモーター操作を実行
+        if (valveDelayManagers[i].motorEnable) {
+          // モーター開始処理
+          digitalWrite(enaPins[i], LOW); // 励磁ON
+          remainingSteps[i] = valveDelayManagers[i].remainingSteps;
+          motorEnabled[i] = true;
+          updatePumpState(i);
+          
+          // 台形加減速設定
+          if (useTrapezoid[i]) {
+            currentSpeedSps[i] = minStartSpeedSps;
+            if (targetSpeedSps[i] > 0.0f && targetSpeedSps[i] < currentSpeedSps[i]) {
+              currentSpeedSps[i] = targetSpeedSps[i];
+            }
+            if (targetSpeedSps[i] > currentSpeedSps[i]) {
+              float dv = targetSpeedSps[i] - currentSpeedSps[i];
+              accelerationSps2[i] = dv / targetRampTimeSec;
+              if (accelerationSps2[i] < 1.0f) accelerationSps2[i] = 1.0f;
+            }
+            stepInterval[i] = spsToIntervalUs(currentSpeedSps[i]);
+            switch(i) {
+              case 0: setupTimer3(stepInterval[0]); break;
+              case 1: setupTimer4(stepInterval[1]); break;
+              case 2: setupTimer5(stepInterval[2]); break;
+            }
+          } else {
+            switch(i) {
+              case 0: setupTimer3(stepInterval[0]); break;
+              case 1: setupTimer4(stepInterval[1]); break;
+              case 2: setupTimer5(stepInterval[2]); break;
+            }
+          }
+        }
+        valveDelayManagers[i].motorActionPending = false;
+        // 遅延処理完了
+        stopValveDelay(i);
+      }
+    } else if (valveDelayManagers[i].delayType == VALVE_DELAY_CLOSE_AFTER) {
+      // モーター停止後のValve閉鎖遅延
+      if (elapsed >= valveDelayManagers[i].delayDuration && valveDelayManagers[i].valveActionPending) {
+        // 0.5秒遅延後にValve操作を実行
+        if (valveDelayManagers[i].valveState) {
+          openValve(i + 1); // ポンプ番号は1-3
+        } else {
+          closeValve(i + 1);
+        }
+        valveDelayManagers[i].valveActionPending = false;
+        valveDelayManagers[i].motorActionPending = false; // 停止時はモーター操作なし
+        // 遅延処理完了
+        stopValveDelay(i);
+      }
+    }
+  }
+}
+
 // ===================== ポンプ状態管理関数 =====================
 // ポンプの状態を更新する関数
 void updatePumpState(int idx) {
@@ -497,8 +635,8 @@ inline void handleStep(int idx) {
         planActive[idx] = false;
         updatePumpState(idx); // ポンプ状態を更新
         
-        // ポンプ自動停止後にバルブを閉じる
-        closeValve(idx + 1); // idxは0-2、バルブ番号は1-3
+        // 非同期Valve遅延管理を開始（モーター自動停止 → 0.5秒後 → Valve閉鎖）
+        startValveDelay(idx, VALVE_DELAY_CLOSE_AFTER, false, false, 0);
       }
     }
 
@@ -684,6 +822,9 @@ ISR(TIMER1_COMPA_vect) {
     }
   }
 
+  // Valve遅延処理（毎ミリ秒実行）
+  processValveDelays();
+
   // 漏液センサ動作チェック（100msごとに実行）
   if (msCounter % 100 == 0) {
     bool leakOn = isLeakDetected(0);
@@ -812,38 +953,16 @@ void processCommand(byte* cmd) {
   long value = atol(numStr);
 
   if (action == 'M') {  // モータ開始 (0=無限動作)
-    // ポンプ開始前にバルブを開く
-    openValve(pumpNo);
-    //delay(100); // バルブ開く時間を確保
+    // 非同期Valve遅延管理を開始（Valve開放 → 0.5秒後 → モーター開始）
+    startValveDelay(idx, VALVE_DELAY_OPEN_BEFORE, true, true, (value > 0) ? value : 0);
     
-    digitalWrite(enaPins[idx], LOW); // 励磁ON
-    remainingSteps[idx] = (value > 0) ? value : 0;
-    motorEnabled[idx] = true;
-    updatePumpState(idx); // ポンプ状態を更新
+    // 台形加減速の事前計画を設定（遅延後に実行される）
     if (useTrapezoid[idx]) {
-      // 立ち上がり開始速度に設定
-      currentSpeedSps[idx] = minStartSpeedSps;
-      if (targetSpeedSps[idx] > 0.0f && targetSpeedSps[idx] < currentSpeedSps[idx]) {
-        currentSpeedSps[idx] = targetSpeedSps[idx];
-      }
-      // 0.2秒で目標速度へ到達するよう加速度を更新
-      if (targetSpeedSps[idx] > currentSpeedSps[idx]) {
-        float dv = targetSpeedSps[idx] - currentSpeedSps[idx];
-        accelerationSps2[idx] = dv / targetRampTimeSec;
-        if (accelerationSps2[idx] < 1.0f) accelerationSps2[idx] = 1.0f;
-      }
-      stepInterval[idx] = spsToIntervalUs(currentSpeedSps[idx]);
-      switch(idx) {
-        case 0: setupTimer3(stepInterval[0]); break;
-        case 1: setupTimer4(stepInterval[1]); break;
-        case 2: setupTimer5(stepInterval[2]); break;
-      }
-
       // ステップ数指定時は台形/三角プロファイルを事前計画
-      if (remainingSteps[idx] > 0 && targetSpeedSps[idx] > 0.0f) {
+      if (value > 0 && targetSpeedSps[idx] > 0.0f) {
         float a = accelerationSps2[idx];
         if (a < 1.0f) a = 1.0f;
-        float v0 = currentSpeedSps[idx];
+        float v0 = minStartSpeedSps;
         float vend = minStartSpeedSps; // 終端は最小開始速度まで落とす想定
         float vtar = targetSpeedSps[idx];
 
@@ -854,7 +973,7 @@ void processCommand(byte* cmd) {
 
         unsigned long accelStepsUL = (unsigned long)(accelStepsF + 0.5f);
         unsigned long decelStepsUL = (unsigned long)(decelStepsF + 0.5f);
-        unsigned long total = remainingSteps[idx];
+        unsigned long total = value;
 
         float peak = vtar;
         unsigned long cruiseStepsUL = 0;
@@ -885,20 +1004,16 @@ void processCommand(byte* cmd) {
         planActive[idx] = false;
         planStepsDone[idx] = 0;
       }
-     // LCD表示
-      lcdClear();
-      lcdPrint("Start");
     } else {
-      // 等速モード時も現在のstepIntervalでタイマをセット（開始時の位相不整合を避ける）
-      switch(idx) {
-        case 0: setupTimer3(stepInterval[0]); break;
-        case 1: setupTimer4(stepInterval[1]); break;
-        case 2: setupTimer5(stepInterval[2]); break;
-      }
       planActive[idx] = false;
       planStepsDone[idx] = 0;
     }
+    
+    // LCD表示
+    lcdClear();
+    lcdPrint("Start");
   } else if (action == 'S') {  // 停止
+    // モーターを即座に停止
     motorEnabled[idx] = false;
     digitalWrite(enaPins[idx], HIGH);  // 励磁OFF
     remainingSteps[idx] = 0;
@@ -907,9 +1022,8 @@ void processCommand(byte* cmd) {
     planStepsDone[idx] = 0;
     updatePumpState(idx); // ポンプ状態を更新
     
-    // ポンプ停止後にバルブを閉じる
-    //delay(100); // ポンプ停止時間を確保
-    closeValve(pumpNo);
+    // 非同期Valve遅延管理を開始（モーター停止 → 0.5秒後 → Valve閉鎖）
+    startValveDelay(idx, VALVE_DELAY_CLOSE_AFTER, false, false, 0);
     
     // LCD表示
     lcdClear();
@@ -956,8 +1070,8 @@ void processCommand(byte* cmd) {
     digitalWrite(enaPins[idx], HIGH);
     updatePumpState(idx); // ポンプ状態を更新
     
-    // Enable OFF後にバルブを閉じる
-    closeValve(pumpNo);
+    // 非同期Valve遅延管理を開始（Enable OFF → 0.5秒後 → Valve閉鎖）
+    startValveDelay(idx, VALVE_DELAY_CLOSE_AFTER, false, false, 0);
     
     // LCD表示
     lcdClear();
