@@ -1,6 +1,7 @@
 #include <avr/io.h>
 #include <avr/interrupt.h>
 #include <math.h>
+//とりあえず0.1完成
 
 // デバッグLEDピン設定
 const int debugLedPin = 52;
