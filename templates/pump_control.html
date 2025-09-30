@@ -401,6 +401,19 @@
             </div>
           </div>
 
+          <!-- 新しい弁常時Openスイッチ -->
+          <div class="control-group">
+            <label>弁常時Open:</label>
+            <div class="input-group">
+              <label class="switch">
+                <input type="checkbox" onchange="toggleValve({{ pump }}, this.checked)">
+                <span class="slider"></span>
+              </label>
+              <span class="direction-label" id="valveLabel{{ pump }}">OFF</span>
+            </div>
+          </div>
+          <!-- /新しい弁常時Openスイッチ -->
+
           <div class="control-group">
             <label>ステップ数:</label>
             <div class="input-group">
@@ -481,6 +494,17 @@
       const state = saved !== null ? saved === 'true' : defaultValue;
       console.log(`スイッチ状態を取得: ${key} = ${state}`);
       return state;
+    }
+
+    // 弁制御
+    function toggleValve(pump, isOpen){
+      const val = isOpen ? '1' : '0';
+      document.getElementById('valveLabel' + pump).innerText = isOpen ? 'ON' : 'OFF';
+      
+      // 状態をローカルストレージに保存
+      saveSwitchState(pump, 'valve', isOpen);
+      
+      sendPumpCommand(pump, 'B', val);
     }
 
     // 方向切替
@@ -851,6 +875,15 @@
           accelerationSwitch.checked = accelerationState;
           document.getElementById('accelLabel' + pump).innerText = accelerationState ? 'ON' : 'OFF';
           console.log(`ポンプ${pump}の台形加速を復元: ${accelerationState ? 'ON' : 'OFF'}`);
+        }
+        
+        // 弁常時Openスイッチの復元
+        const valveState = getSwitchState(pump, 'valve', false);
+        const valveSwitch = document.querySelector(`input[type="checkbox"][onchange*="toggleValve(${pump}"]`);
+        if (valveSwitch) {
+          valveSwitch.checked = valveState;
+          document.getElementById('valveLabel' + pump).innerText = valveState ? 'ON' : 'OFF';
+          console.log(`ポンプ${pump}の弁常時Openを復元: ${valveState ? 'ON' : 'OFF'}`);
         }
       }
       

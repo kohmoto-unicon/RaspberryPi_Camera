@@ -11,7 +11,8 @@
     }
   },
   "terminal.integrated.defaultProfile.windows": "CMD (venv)",
-  "editor.fontSize": 18
+  "editor.fontSize": 18,
+  "kiroAgent.configureMCP": "Disabled"
 }
 
     

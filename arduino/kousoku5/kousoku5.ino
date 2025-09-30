@@ -44,6 +44,10 @@ const int enaPins[3]  = {24, 27, 30};  // M1〜M3 ENA  (ENA+)
 // ==== バルブ制御ピン設定 ====
 const int valvePins[3] = {40, 41, 42}; // バルブ制御ポート1,2,3
 
+// ==== バルブ常時Openフラグ ====
+// 初期値はOFF（false）
+volatile bool valveNormallyOpen[3] = {false, false, false};
+
 // ==== 基本モータ設定 ====
 const int MICRO_STEP_1_2 = 2; // 1/2ステップ
 const int MICRO_STEP_1_4 = 4; // 1/4ステップ
@@ -183,7 +187,10 @@ void processValveDelays() {
         if (valveDelayManagers[i].valveState) {
           openValve(i + 1); // ポンプ番号は1-3
         } else {
-          closeValve(i + 1);
+          // バルブ常時OpenフラグがONの場合、バルブを閉じない
+          if (!valveNormallyOpen[i]) {
+            closeValve(i + 1);
+          }
         }
         valveDelayManagers[i].valveActionPending = false;
         // 遅延タイマーをリセット（Valve操作後から0.5秒後にモーター開始）
@@ -233,7 +240,10 @@ void processValveDelays() {
         if (valveDelayManagers[i].valveState) {
           openValve(i + 1); // ポンプ番号は1-3
         } else {
-          closeValve(i + 1);
+          // バルブ常時OpenフラグがONの場合、バルブを閉じない
+          if (!valveNormallyOpen[i]) {
+            closeValve(i + 1);
+          }
         }
         valveDelayManagers[i].valveActionPending = false;
         valveDelayManagers[i].motorActionPending = false; // 停止時はモーター操作なし
@@ -293,8 +303,12 @@ void stopAllPumps() {
   }
   interrupts();
   
-  // 全ポンプ停止後に全バルブを閉じる
-  closeAllValves();
+  // 全ポンプ停止後にバルブを閉じる（ただし、バルブ常時OpenフラグがONのものは除く）
+  for (int i = 0; i < 3; i++) {
+    if (!valveNormallyOpen[i]) {
+      digitalWrite(valvePins[i], LOW);
+    }
+  }
 }
 
 // ===================== バルブ制御関数 =====================
@@ -329,7 +343,10 @@ void closeValve(int valveNumber) {
 // 全バルブを閉じる
 void closeAllValves() {
   for (int i = 0; i < 3; i++) {
-    digitalWrite(valvePins[i], LOW);
+    // バルブ常時OpenフラグがONの場合、バルブを閉じない
+    if (!valveNormallyOpen[i]) {
+      digitalWrite(valvePins[i], LOW);
+    }
   }
   //Serial.println("全バルブを閉じました（OFF）");
 }
@@ -953,8 +970,42 @@ void processCommand(byte* cmd) {
   long value = atol(numStr);
 
   if (action == 'M') {  // モータ開始 (0=無限動作)
-    // 非同期Valve遅延管理を開始（Valve開放 → 0.5秒後 → モーター開始）
-    startValveDelay(idx, VALVE_DELAY_OPEN_BEFORE, true, true, (value > 0) ? value : 0);
+    // バルブ常時OpenフラグがONの場合、すでにバルブは開いているので遅延管理は不要
+    if (valveNormallyOpen[idx]) {
+      // モーターを即座に開始
+      digitalWrite(enaPins[idx], LOW); // 励磁ON
+      remainingSteps[idx] = (value > 0) ? value : 0;
+      motorEnabled[idx] = true;
+      updatePumpState(idx);
+      
+      // 台形加減速設定
+      if (useTrapezoid[idx]) {
+        currentSpeedSps[idx] = minStartSpeedSps;
+        if (targetSpeedSps[idx] > 0.0f && targetSpeedSps[idx] < currentSpeedSps[idx]) {
+          currentSpeedSps[idx] = targetSpeedSps[idx];
+        }
+        if (targetSpeedSps[idx] > currentSpeedSps[idx]) {
+          float dv = targetSpeedSps[idx] - currentSpeedSps[idx];
+          accelerationSps2[idx] = dv / targetRampTimeSec;
+          if (accelerationSps2[idx] < 1.0f) accelerationSps2[idx] = 1.0f;
+        }
+        stepInterval[idx] = spsToIntervalUs(currentSpeedSps[idx]);
+        switch(idx) {
+          case 0: setupTimer3(stepInterval[0]); break;
+          case 1: setupTimer4(stepInterval[1]); break;
+          case 2: setupTimer5(stepInterval[2]); break;
+        }
+      } else {
+        switch(idx) {
+          case 0: setupTimer3(stepInterval[0]); break;
+          case 1: setupTimer4(stepInterval[1]); break;
+          case 2: setupTimer5(stepInterval[2]); break;
+        }
+      }
+    } else {
+      // 非同期Valve遅延管理を開始（Valve開放 → 0.5秒後 → モーター開始）
+      startValveDelay(idx, VALVE_DELAY_OPEN_BEFORE, true, true, (value > 0) ? value : 0);
+    }
     
     // 台形加減速の事前計画を設定（遅延後に実行される）
     if (useTrapezoid[idx]) {
@@ -1022,8 +1073,11 @@ void processCommand(byte* cmd) {
     planStepsDone[idx] = 0;
     updatePumpState(idx); // ポンプ状態を更新
     
-    // 非同期Valve遅延管理を開始（モーター停止 → 0.5秒後 → Valve閉鎖）
-    startValveDelay(idx, VALVE_DELAY_CLOSE_AFTER, false, false, 0);
+    // バルブ常時OpenフラグがONの場合、バルブを閉じない
+    if (!valveNormallyOpen[idx]) {
+      // 非同期Valve遅延管理を開始（モーター停止 → 0.5秒後 → Valve閉鎖）
+      startValveDelay(idx, VALVE_DELAY_CLOSE_AFTER, false, false, 0);
+    }
     
     // LCD表示
     lcdClear();
@@ -1070,8 +1124,11 @@ void processCommand(byte* cmd) {
     digitalWrite(enaPins[idx], HIGH);
     updatePumpState(idx); // ポンプ状態を更新
     
-    // 非同期Valve遅延管理を開始（Enable OFF → 0.5秒後 → Valve閉鎖）
-    startValveDelay(idx, VALVE_DELAY_CLOSE_AFTER, false, false, 0);
+    // バルブ常時OpenフラグがONの場合、バルブを閉じない
+    if (!valveNormallyOpen[idx]) {
+      // 非同期Valve遅延管理を開始（Enable OFF → 0.5秒後 → Valve閉鎖）
+      startValveDelay(idx, VALVE_DELAY_CLOSE_AFTER, false, false, 0);
+    }
     
     // LCD表示
     lcdClear();
@@ -1093,6 +1150,25 @@ void processCommand(byte* cmd) {
     // LCD表示
     lcdClear();
     lcdPrint("ReceiveTrapezoid");
+  } else if (action == 'B') {  // バルブ常時Open設定（000000:OFF, 000001:ON）
+    if (value == 1) {
+      // バルブ常時OpenフラグをONに設定し、ただちにバルブをOPENする
+      valveNormallyOpen[idx] = true;
+      openValve(pumpNo);
+      // LCD表示
+      lcdClear();
+      lcdPrint("Valve Normally Open ON");
+    } else if (value == 0) {
+      // バルブ常時OpenフラグをOFFに設定
+      valveNormallyOpen[idx] = false;
+      // モーターが停止中の場合、バルブを閉じる
+      if (!motorEnabled[idx]) {
+        closeValve(pumpNo);
+      }
+      // LCD表示
+      lcdClear();
+      lcdPrint("Valve Normally Open OFF");
+    }
   } else if (action == 'C') {  // 電流データ取得（ダミー応答）
     // STX + ポンプNo + 電流値(符号+5桁整数) + ETX + CS の形式で送信
     char response[11];
@@ -1230,7 +1306,12 @@ void setup() {
   // バルブ制御ピン設定
   for (int i = 0; i < 3; i++) {
     pinMode(valvePins[i], OUTPUT);
-    digitalWrite(valvePins[i], LOW); // 初期状態はClose（OFF）
+    // バルブ常時OpenフラグがONの場合、バルブをOPENする
+    if (valveNormallyOpen[i]) {
+      digitalWrite(valvePins[i], HIGH); // Open（ON）
+    } else {
+      digitalWrite(valvePins[i], LOW); // Close（OFF）
+    }
   }
 
   // デバッグLEDピン設定
