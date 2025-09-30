@@ -467,10 +467,30 @@
       return result.join(' ');
     }
 
+    // スイッチの状態をローカルストレージに保存
+    function saveSwitchState(pump, switchType, state) {
+      const key = `pump_${pump}_${switchType}`;
+      localStorage.setItem(key, state.toString());
+      console.log(`スイッチ状態を保存: ${key} = ${state}`);
+    }
+
+    // スイッチの状態をローカルストレージから取得
+    function getSwitchState(pump, switchType, defaultValue = false) {
+      const key = `pump_${pump}_${switchType}`;
+      const saved = localStorage.getItem(key);
+      const state = saved !== null ? saved === 'true' : defaultValue;
+      console.log(`スイッチ状態を取得: ${key} = ${state}`);
+      return state;
+    }
+
     // 方向切替
     function toggleDirection(pump, isReverse){
       const dir = isReverse ? 'R' : 'F';
       document.getElementById('dirLabel' + pump).innerText = isReverse ? '逆転' : '正転';
+      
+      // 状態をローカルストレージに保存
+      saveSwitchState(pump, 'direction', isReverse);
+      
       sendPumpCommand(pump, dir);
     }
 
@@ -478,6 +498,10 @@
     function toggleAccel(pump, isOn){
       const val = isOn ? '1' : '0';
       document.getElementById('accelLabel' + pump).innerText = isOn ? 'ON' : 'OFF';
+      
+      // 状態をローカルストレージに保存
+      saveSwitchState(pump, 'acceleration', isOn);
+      
       sendPumpCommand(pump, 'A', val);
     }
 
@@ -805,6 +829,34 @@
       }
     }
 
+    // スイッチの状態を復元する関数
+    function restoreSwitchStates() {
+      console.log('スイッチの状態を復元中...');
+      
+      // 各ポンプのスイッチ状態を復元
+      for (let pump = 1; pump <= 6; pump++) {
+        // 方向切替スイッチの復元
+        const directionState = getSwitchState(pump, 'direction', false);
+        const directionSwitch = document.querySelector(`input[type="checkbox"][onchange*="toggleDirection(${pump}"]`);
+        if (directionSwitch) {
+          directionSwitch.checked = directionState;
+          document.getElementById('dirLabel' + pump).innerText = directionState ? '逆転' : '正転';
+          console.log(`ポンプ${pump}の方向切替を復元: ${directionState ? '逆転' : '正転'}`);
+        }
+        
+        // 台形加速スイッチの復元
+        const accelerationState = getSwitchState(pump, 'acceleration', false);
+        const accelerationSwitch = document.querySelector(`input[type="checkbox"][onchange*="toggleAccel(${pump}"]`);
+        if (accelerationSwitch) {
+          accelerationSwitch.checked = accelerationState;
+          document.getElementById('accelLabel' + pump).innerText = accelerationState ? 'ON' : 'OFF';
+          console.log(`ポンプ${pump}の台形加速を復元: ${accelerationState ? 'ON' : 'OFF'}`);
+        }
+      }
+      
+      console.log('スイッチの状態復元完了');
+    }
+
     // ページ読み込み時に状態確認
     document.addEventListener('DOMContentLoaded', function() {
       console.log('ページ読み込み完了 - 漏液検出監視を開始します');
@@ -817,6 +869,9 @@
       for (let i = 0; i < allRpmElements.length; i++) {
         console.log(`[DEBUG] 要素${i}: id="${allRpmElements[i].id}", text="${allRpmElements[i].textContent}"`);
       }
+      
+      // スイッチの状態を復元
+      restoreSwitchStates();
       
       // 漏液検出状態を初期化
       window.leakDetected = false;
