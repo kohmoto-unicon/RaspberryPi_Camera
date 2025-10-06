@@ -1083,12 +1083,12 @@ void processCommand(byte* cmd) {
     lcdClear();
     lcdPrint("Receive Stop");
   } else if (action == 'F') {  // 正転
-    digitalWrite(dirPins[idx], HIGH);
+    digitalWrite(dirPins[idx], LOW);
     // LCD表示
     lcdClear();
     lcdPrint("Receive Forward");
   } else if (action == 'R') {  // 逆転
-    digitalWrite(dirPins[idx], LOW);
+    digitalWrite(dirPins[idx], HIGH);
     // LCD表示
     lcdClear();
     lcdPrint("Receive Reverse");
@@ -1286,7 +1286,7 @@ void setup() {
     pinMode(dirPins[i], OUTPUT);
     pinMode(enaPins[i], OUTPUT);
     digitalWrite(enaPins[i], LOW);
-    digitalWrite(dirPins[i], HIGH);
+    digitalWrite(dirPins[i], LOW);
 
     // ポートとビットマスクを計算
     uint8_t pin = stepPins[i];
