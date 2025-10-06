@@ -80,8 +80,16 @@ volatile bool useTrapezoid[3] = {false, false, false}; // モータ毎に台形O
 volatile float currentSpeedSps[3] = {0.0f, 0.0f, 0.0f}; // 現在速度 [steps/s]
 volatile float targetSpeedSps[3]  = {0.0f, 0.0f, 0.0f}; // 目標速度 [steps/s]
 volatile float accelerationSps2[3] = {4000.0f, 4000.0f, 4000.0f}; // 加速度 [steps/s^2]
-const float minStartSpeedSps = 500.0f; // 立ち上がり開始速度（初速）[steps/s]
+const float minStartSpeedSps = 650.0f; // 立ち上がり開始速度（初速）[steps/s]
 const float targetRampTimeSec = 0.2f;  // 初速から目標速度までの到達時間 [s]
+
+// ==== 台形加速事前計算配列 ====
+#define MAX_TRAPEZOID_STEPS 600   // 最大ステップ数（200rpm、0.2秒立ち上げ用）
+volatile unsigned int precomputedIntervals[3][MAX_TRAPEZOID_STEPS]; // 事前計算されたインターバル配列
+volatile unsigned int precomputedStepCount[3] = {0, 0, 0}; // 各モータの事前計算ステップ数
+volatile unsigned int precomputedIndex[3] = {0, 0, 0}; // 現在の配列インデックス
+volatile bool usePrecomputed[3] = {false, false, false}; // 事前計算配列使用フラグ
+volatile bool precomputedInitialized = false; // 起動時初期化フラグ
 
 // ==== STEPピン用ポートポインタとマスク ====
 volatile uint8_t *stepPorts[3];
@@ -670,14 +678,21 @@ inline void handleStep(int idx) {
     *stepPorts[idx] &= ~stepMasks[idx]; // LOW
   }
 
-  // --- 軽量化された台形加減速処理 ---
+  // --- 軽量化された台形加減速処理（配列参照版） ---
   if (useTrapezoid[idx] && motorEnabled[idx]) {
-    // 計算頻度を削減：2回に1回のみ計算（制御精度を保持）
-    static uint8_t calcCounter[3] = {0, 0, 0};
-    calcCounter[idx] = (calcCounter[idx] + 1) & 0x01; // 0-1の範囲でカウント
-    
-    if (calcCounter[idx] == 0) { // 2回に1回実行
-      updateTrapezoidSpeed(idx);
+    if (usePrecomputed[idx] && precomputedIndex[idx] < precomputedStepCount[idx]) {
+      // 事前計算配列からインターバルを取得（超軽量）
+      stepInterval[idx] = precomputedIntervals[idx][precomputedIndex[idx]];
+      precomputedIndex[idx]++;
+      updateTimerOCR(idx);
+    } else {
+      // フォールバック：従来の計算方式（無限動作など）
+      static uint8_t calcCounter[3] = {0, 0, 0};
+      calcCounter[idx] = (calcCounter[idx] + 1) & 0x01; // 0-1の範囲でカウント
+      
+      if (calcCounter[idx] == 0) { // 2回に1回実行
+        updateTrapezoidSpeed(idx);
+      }
     }
   }
 }
@@ -690,6 +705,75 @@ inline void updateTimerOCR(int idx) {
     case 1: OCR4A = ocrValue; break;
     case 2: OCR5A = ocrValue; break;
   }
+}
+
+// ===================== 台形加速事前計算関数 =====================
+// 起動時に1回だけ実行する台形加速配列の初期化（200rpm、0.2秒立ち上げ）
+void initializeTrapezoidArrays() {
+  if (precomputedInitialized) return; // 既に初期化済みの場合はスキップ
+  
+  // 200rpm（1333.3steps/s）への0.2秒立ち上げ用パラメータ
+  float peakSpeed = 1333.3f; // 200rpm = 1333.3steps/s
+  float accel = (peakSpeed - minStartSpeedSps) / targetRampTimeSec; // 0.2秒で立ち上げ
+  
+  for (int idx = 0; idx < 3; idx++) {
+    // 各モータ用の配列を初期化
+    for (int i = 0; i < MAX_TRAPEZOID_STEPS; i++) {
+      precomputedIntervals[idx][i] = 0;
+    }
+    
+    unsigned int arrayIndex = 0;
+    float currentSpeed = minStartSpeedSps;
+    
+    // 0.2秒の立ち上げプロファイルを計算
+    for (int step = 0; step < MAX_TRAPEZOID_STEPS; step++) {
+      // 時間ベースの加速計算（0.2秒で最高速まで）
+      float timeRatio = (float)step / (float)MAX_TRAPEZOID_STEPS;
+      if (timeRatio > 1.0f) timeRatio = 1.0f;
+      
+      currentSpeed = minStartSpeedSps + (peakSpeed - minStartSpeedSps) * timeRatio;
+      
+      unsigned int interval = spsToIntervalUs(currentSpeed);
+      if (interval > 0) {
+        precomputedIntervals[idx][arrayIndex] = interval;
+        arrayIndex++;
+      }
+    }
+    
+    // 設定を保存
+    precomputedStepCount[idx] = arrayIndex;
+    precomputedIndex[idx] = 0;
+    usePrecomputed[idx] = (arrayIndex > 0);
+  }
+  
+  precomputedInitialized = true;
+}
+
+// 台形加速の有効化（起動時配列を使用）
+void enableTrapezoidForMotor(int idx, unsigned long totalSteps) {
+  if (idx < 0 || idx >= 3) return;
+  if (totalSteps == 0 || totalSteps > MAX_TRAPEZOID_STEPS) {
+    usePrecomputed[idx] = false;
+    return;
+  }
+  
+  // 起動時配列を使用
+  usePrecomputed[idx] = true;
+  precomputedIndex[idx] = 0;
+  
+  // 計画情報を更新
+  planActive[idx] = true;
+  planTotalSteps[idx] = totalSteps;
+  planStepsDone[idx] = 0;
+}
+
+// 事前計算配列をリセットする関数
+void resetPrecomputedArray(int idx) {
+  if (idx < 0 || idx >= 3) return;
+  
+  usePrecomputed[idx] = false;
+  precomputedStepCount[idx] = 0;
+  precomputedIndex[idx] = 0;
 }
 
 // 台形加減速処理を分離（制御精度を保持した軽量化版）
@@ -1004,6 +1088,14 @@ void processCommand(byte* cmd) {
           accelerationSps2[idx] = dv / targetRampTimeSec;
           if (accelerationSps2[idx] < 1.0f) accelerationSps2[idx] = 1.0f;
         }
+        
+        // 起動時配列を有効化（有限ステップ数の場合のみ）
+        if (value > 0 && value <= MAX_TRAPEZOID_STEPS) {
+          enableTrapezoidForMotor(idx, value);
+        } else {
+          usePrecomputed[idx] = false; // 無限動作の場合は従来方式
+        }
+        
         stepInterval[idx] = spsToIntervalUs(currentSpeedSps[idx]);
         switch(idx) {
           case 0: setupTimer3(stepInterval[0]); break;
@@ -1086,6 +1178,7 @@ void processCommand(byte* cmd) {
     currentSpeedSps[idx] = 0.0f;
     planActive[idx] = false;
     planStepsDone[idx] = 0;
+    resetPrecomputedArray(idx); // 事前計算配列をリセット
     updatePumpState(idx); // ポンプ状態を更新
     
     // バルブ常時OpenフラグがONの場合、バルブを閉じない
@@ -1161,6 +1254,12 @@ void processCommand(byte* cmd) {
       }
       planActive[idx] = false;
       planStepsDone[idx] = 0;
+      usePrecomputed[idx] = false; // 事前計算配列を無効化
+    } else {
+      // 台形加速ON時：起動時配列を有効化
+      if (remainingSteps[idx] > 0 && remainingSteps[idx] <= MAX_TRAPEZOID_STEPS) {
+        enableTrapezoidForMotor(idx, remainingSteps[idx]);
+      }
     }
     // LCD表示
     lcdClear();
@@ -1344,6 +1443,9 @@ void setup() {
   
   // 1msタイマーの設定
   setupTimer1ForMillisecond();
+  
+  // 台形加速配列の初期化（起動時に1回だけ）
+  initializeTrapezoidArrays();
   
   // 初期ポンプ状態を設定
   for (int i = 0; i < 3; i++) {
