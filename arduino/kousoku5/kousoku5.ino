@@ -1399,7 +1399,7 @@ void setup() {
     pinMode(stepPins[i], OUTPUT);
     pinMode(dirPins[i], OUTPUT);
     pinMode(enaPins[i], OUTPUT);
-    digitalWrite(enaPins[i], LOW);
+    digitalWrite(enaPins[i], HIGH);  // 励磁OFF（初期状態）
     digitalWrite(dirPins[i], LOW);
 
     // ポートとビットマスクを計算
