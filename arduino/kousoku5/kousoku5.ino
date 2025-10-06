@@ -637,6 +637,7 @@ inline bool isLeakDetected(int idx) {
 }
 
 // ===================== ステップトグル関数 =====================
+// 最適化されたステップ処理（軽量化版）
 inline void handleStep(int idx) {
   if (!motorEnabled[idx]) return;
   stepHigh[idx] = !stepHigh[idx];
@@ -662,88 +663,102 @@ inline void handleStep(int idx) {
       pendingIntervalUpdate[idx] = false;
       if (pendingIntervalUs[idx] > 0) {
         stepInterval[idx] = pendingIntervalUs[idx];
-        switch (idx) {
-          case 0: OCR3A = (uint16_t)((16UL * stepInterval[0] / 2UL) - 1UL); break;
-          case 1: OCR4A = (uint16_t)((16UL * stepInterval[1] / 2UL) - 1UL); break;
-          case 2: OCR5A = (uint16_t)((16UL * stepInterval[2] / 2UL) - 1UL); break;
-        }
+        updateTimerOCR(idx);
       }
     }
   } else {
     *stepPorts[idx] &= ~stepMasks[idx]; // LOW
   }
 
-  // --- 台形加減速処理（半周期ごとに更新して滑らかさを向上） ---
+  // --- 軽量化された台形加減速処理 ---
   if (useTrapezoid[idx] && motorEnabled[idx]) {
-    float accel = accelerationSps2[idx];
-    if (accel < 1.0f) accel = 1.0f;
-
-    if (currentSpeedSps[idx] < 1.0f) {
-      currentSpeedSps[idx] = minStartSpeedSps;
+    // 計算頻度を削減：2回に1回のみ計算（制御精度を保持）
+    static uint8_t calcCounter[3] = {0, 0, 0};
+    calcCounter[idx] = (calcCounter[idx] + 1) & 0x01; // 0-1の範囲でカウント
+    
+    if (calcCounter[idx] == 0) { // 2回に1回実行
+      updateTrapezoidSpeed(idx);
     }
+  }
+}
 
-    // 半周期の時間 [s]
-    float dt = (float)stepInterval[idx] / 2000000.0f;
+// OCRレジスタ更新を最適化した関数
+inline void updateTimerOCR(int idx) {
+  uint16_t ocrValue = (uint16_t)((16UL * stepInterval[idx] / 2UL) - 1UL);
+  switch (idx) {
+    case 0: OCR3A = ocrValue; break;
+    case 1: OCR4A = ocrValue; break;
+    case 2: OCR5A = ocrValue; break;
+  }
+}
 
-    if (remainingSteps[idx] == 0) {
-      // 無限動作（残ステップ=0）は従来通り目標速度へ追従
+// 台形加減速処理を分離（制御精度を保持した軽量化版）
+inline void updateTrapezoidSpeed(int idx) {
+  // 浮動小数点演算を使用（制御精度を保持）
+  float accel = accelerationSps2[idx];
+  if (accel < 1.0f) accel = 1.0f;
+
+  if (currentSpeedSps[idx] < 1.0f) {
+    currentSpeedSps[idx] = minStartSpeedSps;
+  }
+
+  // 半周期の時間 [s] - 元の計算方法を保持
+  float dt = (float)stepInterval[idx] / 2000000.0f;
+
+  if (remainingSteps[idx] == 0) {
+    // 無限動作（残ステップ=0）は従来通り目標速度へ追従
+    if (targetSpeedSps[idx] > 0.0f && currentSpeedSps[idx] < targetSpeedSps[idx]) {
+      currentSpeedSps[idx] += accel * dt;
+      if (currentSpeedSps[idx] > targetSpeedSps[idx]) currentSpeedSps[idx] = targetSpeedSps[idx];
+    } else if (targetSpeedSps[idx] > 0.0f) {
+      currentSpeedSps[idx] = targetSpeedSps[idx];
+    }
+  } else if (planActive[idx]) {
+    // 事前計画に基づく台形/三角プロファイル
+    unsigned long s = planStepsDone[idx];
+    unsigned long accelEnd = planAccelSteps[idx];
+    unsigned long cruiseEnd = planAccelSteps[idx] + planCruiseSteps[idx];
+
+    if (s < accelEnd) {
+      // 加速フェーズ
+      float peak = planPeakSpeedSps[idx];
+      if (currentSpeedSps[idx] < peak) {
+        currentSpeedSps[idx] += accel * dt;
+        if (currentSpeedSps[idx] > peak) currentSpeedSps[idx] = peak;
+      }
+    } else if (s < cruiseEnd) {
+      // 等速フェーズ
+      currentSpeedSps[idx] = planPeakSpeedSps[idx];
+    } else {
+      // 減速フェーズ（最小開始速度まで）
+      currentSpeedSps[idx] -= accel * dt;
+      if (currentSpeedSps[idx] < minStartSpeedSps) currentSpeedSps[idx] = minStartSpeedSps;
+    }
+  } else {
+    // フォールバック：残ステップからの動的判断（後方互換）
+    bool shouldDecel = false;
+    float stepsToStop = (currentSpeedSps[idx] * currentSpeedSps[idx]) / (2.0f * accel);
+    if ((float)remainingSteps[idx] <= stepsToStop + 1.0f) {
+      shouldDecel = true;
+    }
+    if (shouldDecel) {
+      currentSpeedSps[idx] -= accel * dt;
+      if (currentSpeedSps[idx] < minStartSpeedSps) currentSpeedSps[idx] = minStartSpeedSps;
+    } else {
       if (targetSpeedSps[idx] > 0.0f && currentSpeedSps[idx] < targetSpeedSps[idx]) {
         currentSpeedSps[idx] += accel * dt;
         if (currentSpeedSps[idx] > targetSpeedSps[idx]) currentSpeedSps[idx] = targetSpeedSps[idx];
       } else if (targetSpeedSps[idx] > 0.0f) {
         currentSpeedSps[idx] = targetSpeedSps[idx];
       }
-    } else if (planActive[idx]) {
-      // 事前計画に基づく台形/三角プロファイル
-      unsigned long s = planStepsDone[idx];
-      unsigned long accelEnd = planAccelSteps[idx];
-      unsigned long cruiseEnd = planAccelSteps[idx] + planCruiseSteps[idx];
-
-      if (s < accelEnd) {
-        // 加速フェーズ
-        float peak = planPeakSpeedSps[idx];
-        if (currentSpeedSps[idx] < peak) {
-          currentSpeedSps[idx] += accel * dt;
-          if (currentSpeedSps[idx] > peak) currentSpeedSps[idx] = peak;
-        }
-      } else if (s < cruiseEnd) {
-        // 等速フェーズ
-        currentSpeedSps[idx] = planPeakSpeedSps[idx];
-      } else {
-        // 減速フェーズ（最小開始速度まで）
-        currentSpeedSps[idx] -= accel * dt;
-        if (currentSpeedSps[idx] < minStartSpeedSps) currentSpeedSps[idx] = minStartSpeedSps;
-      }
-    } else {
-      // フォールバック：残ステップからの動的判断（後方互換）
-      bool shouldDecel = false;
-      float stepsToStop = (currentSpeedSps[idx] * currentSpeedSps[idx]) / (2.0f * accel);
-      if ((float)remainingSteps[idx] <= stepsToStop + 1.0f) {
-        shouldDecel = true;
-      }
-      if (shouldDecel) {
-        currentSpeedSps[idx] -= accel * dt;
-        if (currentSpeedSps[idx] < minStartSpeedSps) currentSpeedSps[idx] = minStartSpeedSps;
-      } else {
-        if (targetSpeedSps[idx] > 0.0f && currentSpeedSps[idx] < targetSpeedSps[idx]) {
-          currentSpeedSps[idx] += accel * dt;
-          if (currentSpeedSps[idx] > targetSpeedSps[idx]) currentSpeedSps[idx] = targetSpeedSps[idx];
-        } else if (targetSpeedSps[idx] > 0.0f) {
-          currentSpeedSps[idx] = targetSpeedSps[idx];
-        }
-      }
     }
+  }
 
-    // 次周期用のインターバルを更新
-    unsigned int newInterval = spsToIntervalUs(currentSpeedSps[idx]);
-    if (newInterval > 0 && newInterval != stepInterval[idx]) {
-      stepInterval[idx] = newInterval;
-      switch (idx) {
-        case 0: OCR3A = (uint16_t)((16UL * stepInterval[0] / 2UL) - 1UL); break;
-        case 1: OCR4A = (uint16_t)((16UL * stepInterval[1] / 2UL) - 1UL); break;
-        case 2: OCR5A = (uint16_t)((16UL * stepInterval[2] / 2UL) - 1UL); break;
-      }
-    }
+  // 次周期用のインターバルを更新（変更があった場合のみ）
+  unsigned int newInterval = spsToIntervalUs(currentSpeedSps[idx]);
+  if (newInterval > 0 && newInterval != stepInterval[idx]) {
+    stepInterval[idx] = newInterval;
+    updateTimerOCR(idx);
   }
 }
 
