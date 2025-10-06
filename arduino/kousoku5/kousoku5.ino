@@ -1073,7 +1073,7 @@ void processCommand(byte* cmd) {
     if (valveNormallyOpen[idx]) {
       // モーターを即座に開始
       digitalWrite(enaPins[idx], LOW); // 励磁ON
-      remainingSteps[idx] = (value > 0) ? value : 0;
+      remainingSteps[idx] = (value > 0) ? value * 2 : 0; // 受信したステップ数の2倍で動作
       motorEnabled[idx] = true;
       updatePumpState(idx);
       
@@ -1090,8 +1090,8 @@ void processCommand(byte* cmd) {
         }
         
         // 起動時配列を有効化（有限ステップ数の場合のみ）
-        if (value > 0 && value <= MAX_TRAPEZOID_STEPS) {
-          enableTrapezoidForMotor(idx, value);
+        if (value > 0 && value * 2 <= MAX_TRAPEZOID_STEPS) {
+          enableTrapezoidForMotor(idx, value * 2);
         } else {
           usePrecomputed[idx] = false; // 無限動作の場合は従来方式
         }
@@ -1111,7 +1111,7 @@ void processCommand(byte* cmd) {
       }
     } else {
       // 非同期Valve遅延管理を開始（Valve開放 → 0.5秒後 → モーター開始）
-      startValveDelay(idx, VALVE_DELAY_OPEN_BEFORE, true, true, (value > 0) ? value : 0);
+      startValveDelay(idx, VALVE_DELAY_OPEN_BEFORE, true, true, (value > 0) ? value * 2 : 0);
     }
     
     // 台形加減速の事前計画を設定（遅延後に実行される）
@@ -1131,7 +1131,7 @@ void processCommand(byte* cmd) {
 
         unsigned long accelStepsUL = (unsigned long)(accelStepsF + 0.5f);
         unsigned long decelStepsUL = (unsigned long)(decelStepsF + 0.5f);
-        unsigned long total = value;
+        unsigned long total = value * 2; // 受信したステップ数の2倍で動作
 
         float peak = vtar;
         unsigned long cruiseStepsUL = 0;
