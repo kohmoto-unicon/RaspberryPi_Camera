@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>ハイセラポンプ制御</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/choices.js/public/assets/styles/choices.min.css">
     <style>
     * {
       margin: 0;
@@ -156,6 +157,53 @@
     .input-group input[type="number"]:focus {
       outline: none;
       border-color: #4facfe;
+    }
+
+    /* Choices.js スタイルカスタマイズ */
+    .choices {
+      margin-bottom: 0;
+      width: 100%;
+      min-width: 200px;
+    }
+
+    .choices__inner {
+      padding: 8px 12px;
+      border: 2px solid #ddd;
+      border-radius: 8px;
+      font-size: 14px;
+      min-height: auto;
+      background-color: white;
+      width: 100%;
+      min-width: 200px;
+    }
+
+    .choices__inner:focus {
+      outline: none;
+      border-color: #4facfe;
+    }
+
+    .choices__input {
+      font-size: 14px;
+      width: 100%;
+      min-width: 150px;
+    }
+
+    .choices__list--dropdown .choices__item--selectable.is-highlighted {
+      background-color: #4facfe;
+    }
+
+    .choices__list--dropdown {
+      border: 2px solid #ddd;
+      border-top: none;
+      border-radius: 0 0 8px 8px;
+      width: 100%;
+      min-width: 200px;
+    }
+
+    /* ステップ数選択ボックス専用のスタイル */
+    .steps-select {
+      width: 100%;
+      min-width: 200px;
     }
 
     .btn-group {
@@ -417,7 +465,20 @@
           <div class="control-group">
             <label>ステップ数:</label>
             <div class="input-group">
-              <input type="number" id="steps{{ pump }}" value="000000" min="0" max="999999" placeholder="ステップ数を入力">
+              <select id="steps{{ pump }}" class="steps-select" data-placeholder="ステップ数を選択または入力">
+                <option value="0">0</option>
+                <option value="100">100</option>
+                <option value="200">200</option>
+                <option value="300">300</option>
+                <option value="400">400</option>
+                <option value="500">500</option>
+                <option value="1000">1000</option>
+                <option value="2000">2000</option>
+                <option value="3000">3000</option>
+                <option value="4000">4000</option>
+                <option value="5000">5000</option>
+                <option value="10000">10000</option>
+              </select>
             </div>
           </div>
 
@@ -444,6 +505,7 @@
     </div>
   </div>
 
+  <script src="https://cdn.jsdelivr.net/npm/choices.js/public/assets/scripts/choices.min.js"></script>
   <script>
     // コマンドバイトを16進数とASCII文字の混合形式でフォーマット
     function formatCommandBytes(bytes, pump) {
@@ -531,7 +593,17 @@
 
     // ステップ送信
     function sendSteps(pump){
-      const steps = document.getElementById('steps' + pump).value;
+      const stepsElement = document.getElementById('steps' + pump);
+      let steps;
+      
+      // Choices.jsが初期化されている場合
+      if (stepsElement.choices) {
+        steps = stepsElement.choices.getValue().value;
+      } else {
+        // 通常のselect要素の場合
+        steps = stepsElement.value;
+      }
+      
       sendPumpCommand(pump, 'M', steps);
     }
 
@@ -937,9 +1009,81 @@
       console.log('スイッチの状態復元完了');
     }
 
+    // Choices.jsを初期化する関数
+    function initializeChoices() {
+      console.log('Choices.jsを初期化中...');
+      
+      // 各ポンプのステップ数選択ボックスを初期化
+      for (let pump = 1; pump <= 6; pump++) {
+        const selectElement = document.getElementById('steps' + pump);
+        if (selectElement) {
+          const choices = new Choices(selectElement, {
+            searchEnabled: true,
+            searchChoices: true,
+            searchPlaceholderValue: '検索...',
+            noResultsText: '結果が見つかりません',
+            noChoicesText: '選択肢がありません',
+            itemSelectText: '選択するにはクリック',
+            addItemText: (value) => `「${value}」を追加`,
+            maxItemText: (maxItemCount) => `最大${maxItemCount}個まで選択可能`,
+            uniqueItemText: 'この値は既に追加されています',
+            customAddItemText: 'Enterキーを押して「{value}」を追加',
+            loadingText: '読み込み中...',
+            noResultsText: '結果が見つかりません',
+            noChoicesText: '選択肢がありません',
+            itemSelectText: '選択するにはクリック',
+            addItemText: (value) => `「${value}」を追加`,
+            maxItemText: (maxItemCount) => `最大${maxItemCount}個まで選択可能`,
+            uniqueItemText: 'この値は既に追加されています',
+            customAddItemText: 'Enterキーを押して「{value}」を追加',
+            loadingText: '読み込み中...',
+            placeholder: true,
+            placeholderValue: 'ステップ数を選択または入力',
+            searchPlaceholderValue: '検索...',
+            allowHTML: false,
+            classNames: {
+              containerOuter: 'choices',
+              containerInner: 'choices__inner',
+              input: 'choices__input',
+              inputCloned: 'choices__input--cloned',
+              list: 'choices__list',
+              listItems: 'choices__list--multiple',
+              listSingle: 'choices__list--single',
+              listDropdown: 'choices__list--dropdown',
+              item: 'choices__item',
+              itemSelectable: 'choices__item--selectable',
+              itemDisabled: 'choices__item--disabled',
+              itemChoice: 'choices__item--choice',
+              placeholder: 'choices__placeholder',
+              group: 'choices__group',
+              groupHeading: 'choices__heading',
+              button: 'choices__button',
+              activeState: 'is-active',
+              focusState: 'is-focused',
+              openState: 'is-open',
+              disabledState: 'is-disabled',
+              highlightedState: 'is-highlighted',
+              selectedState: 'is-selected',
+              flippedState: 'is-flipped',
+              loadingState: 'is-loading',
+              noResults: 'has-no-results',
+              noChoices: 'has-no-choices'
+            }
+          });
+          
+          console.log(`ポンプ${pump}のChoices.jsを初期化しました`);
+        }
+      }
+      
+      console.log('Choices.jsの初期化が完了しました');
+    }
+
     // ページ読み込み時に状態確認
     document.addEventListener('DOMContentLoaded', function() {
       console.log('ページ読み込み完了 - 漏液検出監視を開始します');
+      
+      // Choices.jsを初期化
+      initializeChoices();
       
       // デバッグ: 利用可能な要素を確認
       console.log('[DEBUG] ページ読み込み時の要素確認');
