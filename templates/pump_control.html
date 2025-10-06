@@ -853,6 +853,53 @@
       }
     }
 
+    // 初回起動かどうかをチェックする関数
+    function isFirstVisit() {
+      const firstVisitKey = 'pump_control_first_visit';
+      const isFirst = !localStorage.getItem(firstVisitKey);
+      if (isFirst) {
+        localStorage.setItem(firstVisitKey, 'false');
+      }
+      return isFirst;
+    }
+
+    // スイッチの状態をリセットする関数
+    function resetSwitchStates() {
+      console.log('スイッチの状態をリセット中...');
+      
+      // 各ポンプのスイッチ状態をリセット
+      for (let pump = 1; pump <= 6; pump++) {
+        // 方向切替スイッチをリセット
+        const directionSwitch = document.querySelector(`input[type="checkbox"][onchange*="toggleDirection(${pump}"]`);
+        if (directionSwitch) {
+          directionSwitch.checked = false;
+          document.getElementById('dirLabel' + pump).innerText = '正転';
+          saveSwitchState(pump, 'direction', false);
+          console.log(`ポンプ${pump}の方向切替をリセット: 正転`);
+        }
+        
+        // 台形加速スイッチをリセット
+        const accelerationSwitch = document.querySelector(`input[type="checkbox"][onchange*="toggleAccel(${pump}"]`);
+        if (accelerationSwitch) {
+          accelerationSwitch.checked = false;
+          document.getElementById('accelLabel' + pump).innerText = 'OFF';
+          saveSwitchState(pump, 'acceleration', false);
+          console.log(`ポンプ${pump}の台形加速をリセット: OFF`);
+        }
+        
+        // 弁常時Openスイッチをリセット
+        const valveSwitch = document.querySelector(`input[type="checkbox"][onchange*="toggleValve(${pump}"]`);
+        if (valveSwitch) {
+          valveSwitch.checked = false;
+          document.getElementById('valveLabel' + pump).innerText = 'OFF';
+          saveSwitchState(pump, 'valve', false);
+          console.log(`ポンプ${pump}の弁常時Openをリセット: OFF`);
+        }
+      }
+      
+      console.log('スイッチの状態リセット完了');
+    }
+
     // スイッチの状態を復元する関数
     function restoreSwitchStates() {
       console.log('スイッチの状態を復元中...');
@@ -903,8 +950,14 @@
         console.log(`[DEBUG] 要素${i}: id="${allRpmElements[i].id}", text="${allRpmElements[i].textContent}"`);
       }
       
-      // スイッチの状態を復元
-      restoreSwitchStates();
+      // 初回起動かどうかをチェックして、スイッチの状態を処理
+      if (isFirstVisit()) {
+        console.log('初回起動のため、スイッチの状態をリセットします');
+        resetSwitchStates();
+      } else {
+        console.log('2回目以降の起動のため、スイッチの状態を復元します');
+        restoreSwitchStates();
+      }
       
       // 漏液検出状態を初期化
       window.leakDetected = false;
