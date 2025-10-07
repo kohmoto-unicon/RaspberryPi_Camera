@@ -225,10 +225,20 @@ void processValveDelays() {
           
           // 台形加減速設定
           if (useTrapezoid[i]) {
+            // 初回動作時の整合性を確保：現在速度を最小開始速度に設定
             currentSpeedSps[i] = minStartSpeedSps;
+            
+            // 目標速度が設定されていない場合は初期値（200rpm）を使用
+            if (targetSpeedSps[i] < 1.0f) {
+              targetSpeedSps[i] = rpmToSps(200); // デフォルト200rpm
+            }
+            
+            // 目標速度が最小開始速度より小さい場合は調整
             if (targetSpeedSps[i] > 0.0f && targetSpeedSps[i] < currentSpeedSps[i]) {
               currentSpeedSps[i] = targetSpeedSps[i];
             }
+            
+            // 加速度の計算（目標速度への到達時間を考慮）
             if (targetSpeedSps[i] > currentSpeedSps[i]) {
               float dv = targetSpeedSps[i] - currentSpeedSps[i];
               accelerationSps2[i] = dv / targetRampTimeSec;
@@ -830,6 +840,12 @@ void enableTrapezoidForMotor(int idx, unsigned long totalSteps) {
     return;
   }
   
+  // 事前計算配列が初期化されているかチェック
+  if (!precomputedInitialized) {
+    usePrecomputed[idx] = false;
+    return;
+  }
+  
   // 起動時配列を使用
   usePrecomputed[idx] = true;
   precomputedIndex[idx] = 0;
@@ -855,8 +871,14 @@ inline void updateTrapezoidSpeed(int idx) {
   float accel = accelerationSps2[idx];
   if (accel < 1.0f) accel = 1.0f;
 
+  // 初回動作時の整合性チェック
   if (currentSpeedSps[idx] < 1.0f) {
     currentSpeedSps[idx] = minStartSpeedSps;
+  }
+  
+  // 目標速度が設定されていない場合の安全対策
+  if (targetSpeedSps[idx] < 1.0f) {
+    targetSpeedSps[idx] = rpmToSps(200); // デフォルト200rpm
   }
 
   // 半周期の時間 [s] - 元の計算方法を保持
@@ -1152,10 +1174,20 @@ void processCommand(byte* cmd) {
       
       // 台形加減速設定
       if (useTrapezoid[idx]) {
+        // 初回動作時の整合性を確保：現在速度を最小開始速度に設定
         currentSpeedSps[idx] = minStartSpeedSps;
+        
+        // 目標速度が設定されていない場合は初期値（200rpm）を使用
+        if (targetSpeedSps[idx] < 1.0f) {
+          targetSpeedSps[idx] = rpmToSps(200); // デフォルト200rpm
+        }
+        
+        // 目標速度が最小開始速度より小さい場合は調整
         if (targetSpeedSps[idx] > 0.0f && targetSpeedSps[idx] < currentSpeedSps[idx]) {
           currentSpeedSps[idx] = targetSpeedSps[idx];
         }
+        
+        // 加速度の計算（目標速度への到達時間を考慮）
         if (targetSpeedSps[idx] > currentSpeedSps[idx]) {
           float dv = targetSpeedSps[idx] - currentSpeedSps[idx];
           accelerationSps2[idx] = dv / targetRampTimeSec;
