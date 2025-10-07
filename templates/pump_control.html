@@ -371,6 +371,123 @@
       transform: translateY(-50%) scale(1.05);
     }
 
+    /* ストリーミング画面 */
+    .streaming-overlay {
+      position: fixed;
+      top: 10px;
+      left: 10px;
+      width: 320px;
+      z-index: 500;
+      background: rgba(0, 0, 0, 0.9);
+      border-radius: 10px;
+      overflow: hidden;
+      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+      transition: width 0.3s ease, height 0.3s ease;
+      pointer-events: auto;
+      cursor: move;
+    }
+
+    .streaming-overlay.dragging {
+      transition: none;
+      box-shadow: 0 8px 30px rgba(0, 0, 0, 0.5);
+    }
+
+    .streaming-overlay.minimized {
+      width: 60px;
+      height: 40px;
+      cursor: pointer;
+    }
+
+    .streaming-overlay.minimized .streaming-video {
+      display: none;
+    }
+
+    .streaming-overlay.minimized .streaming-controls {
+      display: none;
+    }
+
+    .streaming-overlay.minimized .streaming-header span {
+      display: none;
+    }
+
+    .streaming-overlay.minimized .streaming-minimize::before {
+      content: '📹';
+      font-size: 20px;
+      display: block;
+      text-align: center;
+      line-height: 40px;
+      position: absolute;
+      left: 50%;
+      top: 50%;
+      transform: translate(-50%, -50%);
+    }
+
+    .streaming-header {
+      background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+      color: white;
+      padding: 5px 10px;
+      font-size: 12px;
+      font-weight: 600;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      position: relative;
+      cursor: move;
+      user-select: none;
+    }
+
+    .streaming-video {
+      width: 100%;
+      height: auto;
+      display: block;
+      aspect-ratio: 16 / 9;
+      background: #000;
+      object-fit: contain;
+      cursor: default;
+      pointer-events: none;
+    }
+
+    .streaming-controls {
+      padding: 5px;
+      background: rgba(0, 0, 0, 0.8);
+      display: flex;
+      justify-content: center;
+      gap: 5px;
+      cursor: default;
+    }
+
+    .streaming-btn {
+      padding: 3px 8px;
+      font-size: 10px;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      background: #4facfe;
+      color: white;
+      transition: all 0.2s ease;
+      pointer-events: auto;
+    }
+
+    .streaming-btn:hover {
+      background: #00f2fe;
+      transform: scale(1.05);
+    }
+
+    .streaming-minimize {
+      background: none;
+      border: none;
+      color: white;
+      cursor: pointer;
+      font-size: 16px;
+      padding: 0 5px;
+      transition: transform 0.2s ease;
+      position: relative;
+    }
+
+    .streaming-minimize:hover {
+      transform: scale(1.2);
+    }
+
     @media (max-width: 768px) {
       .header h1 {
         font-size: 2em;
@@ -383,6 +500,12 @@
       .btn-group {
         flex-direction: column;
       }
+
+      .streaming-overlay {
+        width: 200px;
+        top: 5px;
+        left: 5px;
+      }
     }
   </style>
 </head>
@@ -391,6 +514,19 @@
   <div class="leak-alert" id="leakAlert">
     🚨 漏液発生！ 🚨
     <button class="leak-reset-btn" onclick="resetLeakAlert()">リセット</button>
+  </div>
+  
+  <!-- カメラストリーミング -->
+  <div class="streaming-overlay" id="streamingOverlay">
+    <div class="streaming-header">
+      <span>📹 カメラ</span>
+      <button class="streaming-minimize" onclick="event.stopPropagation(); toggleStreaming();">−</button>
+    </div>
+    <img src="{{ url_for('video_feed') }}" alt="カメラストリーム" class="streaming-video" id="streamingVideo" onerror="handleStreamingError()">
+    <div class="streaming-controls">
+      <button class="streaming-btn" onclick="event.stopPropagation(); refreshStream();">更新</button>
+      <button class="streaming-btn" onclick="event.stopPropagation(); openFullStream();">拡大</button>
+    </div>
   </div>
   
   <!-- 自動送信状態表示 -->
@@ -1123,29 +1259,16 @@
         const selectElement = document.getElementById('steps' + pump);
         if (selectElement) {
           const choices = new Choices(selectElement, {
-            searchEnabled: true,
-            searchChoices: true,
-            searchPlaceholderValue: '検索...',
+            searchEnabled: false,
+            searchChoices: false,
+            removeItemButton: false,
             noResultsText: '結果が見つかりません',
             noChoicesText: '選択肢がありません',
-            itemSelectText: '選択するにはクリック',
-            addItemText: (value) => `「${value}」を追加`,
-            maxItemText: (maxItemCount) => `最大${maxItemCount}個まで選択可能`,
-            uniqueItemText: 'この値は既に追加されています',
-            customAddItemText: 'Enterキーを押して「{value}」を追加',
-            loadingText: '読み込み中...',
-            noResultsText: '結果が見つかりません',
-            noChoicesText: '選択肢がありません',
-            itemSelectText: '選択するにはクリック',
-            addItemText: (value) => `「${value}」を追加`,
-            maxItemText: (maxItemCount) => `最大${maxItemCount}個まで選択可能`,
-            uniqueItemText: 'この値は既に追加されています',
-            customAddItemText: 'Enterキーを押して「{value}」を追加',
-            loadingText: '読み込み中...',
+            itemSelectText: '',
             placeholder: true,
-            placeholderValue: 'ステップ数を選択または入力',
-            searchPlaceholderValue: '検索...',
+            placeholderValue: 'ステップ数を選択',
             allowHTML: false,
+            shouldSort: false,
             classNames: {
               containerOuter: 'choices',
               containerInner: 'choices__inner',
@@ -1177,15 +1300,201 @@
           });
           
           console.log(`ポンプ${pump}のChoices.jsを初期化しました`);
+          
+          // selectElementにchoicesインスタンスを保存
+          selectElement.choices = choices;
         }
       }
       
       console.log('Choices.jsの初期化が完了しました');
     }
 
+    // ストリーミング関連の関数
+    function toggleStreaming() {
+      try {
+        const overlay = document.getElementById('streamingOverlay');
+        const minimizeBtn = overlay.querySelector('.streaming-minimize');
+        
+        if (overlay.classList.contains('minimized')) {
+          overlay.classList.remove('minimized');
+          minimizeBtn.textContent = '−';
+        } else {
+          overlay.classList.add('minimized');
+          minimizeBtn.textContent = '';
+        }
+      } catch (error) {
+        console.error('ストリーミングトグルエラー:', error);
+      }
+    }
+
+    function refreshStream() {
+      try {
+        const streamingVideo = document.getElementById('streamingVideo');
+        if (streamingVideo) {
+          streamingVideo.src = streamingVideo.src.split('?')[0] + '?t=' + Date.now();
+        }
+      } catch (error) {
+        console.error('ストリーム更新エラー:', error);
+      }
+    }
+
+    function openFullStream() {
+      try {
+        window.open('/', '_blank');
+      } catch (error) {
+        console.error('フルストリーム表示エラー:', error);
+      }
+    }
+
+    // ストリーミング画像のエラーハンドリング
+    function handleStreamingError() {
+      console.warn('ストリーミング画像の読み込みに失敗しました');
+      const streamingVideo = document.getElementById('streamingVideo');
+      if (streamingVideo) {
+        streamingVideo.style.display = 'none';
+      }
+    }
+
+    // ドラッグ機能の実装
+    let isDragging = false;
+    let dragOffsetX = 0;
+    let dragOffsetY = 0;
+
+    function initDraggable() {
+      const overlay = document.getElementById('streamingOverlay');
+      const header = overlay.querySelector('.streaming-header');
+      
+      if (!overlay || !header) return;
+
+      let clickStartTime = 0;
+      let clickStartX = 0;
+      let clickStartY = 0;
+
+      // マウスダウン（ドラッグ開始）
+      header.addEventListener('mousedown', function(e) {
+        // ボタンクリック時はドラッグしない
+        if (e.target.classList.contains('streaming-minimize')) {
+          return;
+        }
+
+        clickStartTime = Date.now();
+        clickStartX = e.clientX;
+        clickStartY = e.clientY;
+
+        isDragging = true;
+        overlay.classList.add('dragging');
+        
+        const rect = overlay.getBoundingClientRect();
+        dragOffsetX = e.clientX - rect.left;
+        dragOffsetY = e.clientY - rect.top;
+        
+        e.preventDefault();
+      });
+
+      // マウスムーブ（ドラッグ中）
+      document.addEventListener('mousemove', function(e) {
+        if (!isDragging) return;
+        
+        let newX = e.clientX - dragOffsetX;
+        let newY = e.clientY - dragOffsetY;
+        
+        // 画面外に出ないように制限
+        const maxX = window.innerWidth - overlay.offsetWidth;
+        const maxY = window.innerHeight - overlay.offsetHeight;
+        
+        newX = Math.max(0, Math.min(newX, maxX));
+        newY = Math.max(0, Math.min(newY, maxY));
+        
+        overlay.style.left = newX + 'px';
+        overlay.style.top = newY + 'px';
+        
+        e.preventDefault();
+      });
+
+      // マウスアップ（ドラッグ終了）
+      document.addEventListener('mouseup', function(e) {
+        if (isDragging) {
+          const clickEndTime = Date.now();
+          const timeDiff = clickEndTime - clickStartTime;
+          const distanceX = Math.abs(e.clientX - clickStartX);
+          const distanceY = Math.abs(e.clientY - clickStartY);
+          const distance = Math.sqrt(distanceX * distanceX + distanceY * distanceY);
+          
+          // クリックと判定（200ms以下で5px以下の移動）
+          if (timeDiff < 200 && distance < 5 && overlay.classList.contains('minimized')) {
+            toggleStreaming();
+          }
+          
+          isDragging = false;
+          overlay.classList.remove('dragging');
+        }
+      });
+
+      // タッチデバイス対応
+      header.addEventListener('touchstart', function(e) {
+        if (e.target.classList.contains('streaming-minimize')) {
+          return;
+        }
+
+        isDragging = true;
+        overlay.classList.add('dragging');
+        
+        const touch = e.touches[0];
+        const rect = overlay.getBoundingClientRect();
+        dragOffsetX = touch.clientX - rect.left;
+        dragOffsetY = touch.clientY - rect.top;
+        
+        e.preventDefault();
+      });
+
+      document.addEventListener('touchmove', function(e) {
+        if (!isDragging) return;
+        
+        const touch = e.touches[0];
+        let newX = touch.clientX - dragOffsetX;
+        let newY = touch.clientY - dragOffsetY;
+        
+        const maxX = window.innerWidth - overlay.offsetWidth;
+        const maxY = window.innerHeight - overlay.offsetHeight;
+        
+        newX = Math.max(0, Math.min(newX, maxX));
+        newY = Math.max(0, Math.min(newY, maxY));
+        
+        overlay.style.left = newX + 'px';
+        overlay.style.top = newY + 'px';
+        
+        e.preventDefault();
+      });
+
+      document.addEventListener('touchend', function(e) {
+        if (isDragging) {
+          isDragging = false;
+          overlay.classList.remove('dragging');
+        }
+      });
+    }
+
     // ページ読み込み時に状態確認
     document.addEventListener('DOMContentLoaded', function() {
       console.log('ページ読み込み完了 - 漏液検出監視を開始します');
+      
+      // ストリーミングを初期状態で最小化
+      try {
+        const streamingOverlay = document.getElementById('streamingOverlay');
+        if (streamingOverlay) {
+          streamingOverlay.classList.add('minimized');
+        }
+      } catch (error) {
+        console.error('ストリーミング初期化エラー:', error);
+      }
+      
+      // ドラッグ機能を初期化
+      try {
+        initDraggable();
+        console.log('ストリーミングのドラッグ機能を初期化しました');
+      } catch (error) {
+        console.error('ドラッグ機能初期化エラー:', error);
+      }
       
       // Choices.jsを初期化
       initializeChoices();
