@@ -483,10 +483,18 @@
           </div>
 
           <div class="control-group">
-            <label>回転数:</label>
+            <label>回転速度:</label>
             <div class="input-group">
               <span id="rpmValue{{ pump }}" class="current-display">0 rpm</span>
               <button class="btn btn-info" onclick="getRPM({{ pump }})">取得</button>
+            </div>
+          </div>
+
+          <div class="control-group">
+            <label>トータル回転数:</label>
+            <div class="input-group">
+              <span id="totalRevolutions{{ pump }}" class="current-display">0 回転</span>
+              <button class="btn btn-info" onclick="getTotalRevolutions({{ pump }})">取得</button>
             </div>
           </div>
 
@@ -646,7 +654,7 @@
           console.log(data.message);
         } else {
           updateRpmDisplay(pump, 0);
-          console.error('回転数取得失敗:', data.message);
+          console.error('回転速度取得失敗:', data.message);
         }
       } catch (error) {
         console.error('通信エラー:', error);
@@ -845,7 +853,7 @@
       console.log('[DEBUG] 自動送信状態をリセットしました');
     }
     
-    // 回転数取得を自動実行（漏液検出のため）
+    // 回転速度取得を自動実行（漏液検出のため）
     async function autoGetRpm() {
       if (isAutoSending) {
         console.log('自動送信中のため、スキップします');
@@ -866,9 +874,9 @@
           updateAutoSendingStatus();
         }, 10000);
         
-        console.log('自動回転数取得を実行中...', new Date().toLocaleTimeString());
+        console.log('自動回転速度取得を実行中...', new Date().toLocaleTimeString());
         
-        // ポンプ1の回転数を取得（漏液検出のため）
+        // ポンプ1の回転速度を取得（漏液検出のため）
         const response = await fetch('/api/get_rpm?pump=1');
         
         if (!response.ok) {
@@ -878,15 +886,15 @@
         const data = await response.json();
         
         if (data.success) {
-          console.log('自動回転数取得成功:', data.rpm, 'rpm');
+          console.log('自動回転速度取得成功:', data.rpm, 'rpm');
           
           // 画面のRPM表示を更新
           updateRpmDisplay(1, data.rpm);
         } else {
-          console.log('自動回転数取得結果:', data.message);
+          console.log('自動回転速度取得結果:', data.message);
         }
       } catch (error) {
-        console.error('自動回転数取得エラー:', error);
+        console.error('自動回転速度取得エラー:', error);
       } finally {
         isAutoSending = false;
         if (autoSendingTimeout) {
@@ -922,6 +930,57 @@
         
         const allElementsWithValue = document.querySelectorAll('[id*="Value"]');
         console.log(`[DEBUG] Value関連の要素:`, allElementsWithValue);
+      }
+    }
+
+    // トータル回転数取得
+    async function getTotalRevolutions(pump){
+      console.log(`[DEBUG] getTotalRevolutions呼び出し: ポンプ${pump}, isAutoSending=${isAutoSending}`);
+      
+      if (isAutoSending) {
+        console.log('自動送信中のため、手動トータル回転数取得をスキップします');
+        alert('自動送信中です。しばらくお待ちください。');
+        return;
+      }
+      
+      try {
+        console.log(`[DEBUG] getTotalRevolutions呼び出し: ポンプ${pump}`);
+        const response = await fetch(`/api/get_total_revolutions?pump=${pump}`);
+        const data = await response.json();
+        
+        console.log(`[DEBUG] getTotalRevolutions レスポンス:`, data);
+        
+        const totalRevolutionsDisplay = document.getElementById('totalRevolutions' + pump);
+        console.log(`[DEBUG] getTotalRevolutions 見つかった要素:`, totalRevolutionsDisplay);
+        
+        // 送信コマンドの内容を表示
+        if (data.command_bytes && data.command_bytes.length > 0) {
+          const commandDisplay = document.getElementById('commandDisplay' + pump);
+          if (commandDisplay) {
+            const commandBytes = new Uint8Array(data.command_bytes);
+            commandDisplay.value = formatCommandBytes(commandBytes, pump);
+          }
+        }
+        
+        if (data.success) {
+          if (totalRevolutionsDisplay) {
+            totalRevolutionsDisplay.textContent = data.total_revolutions + ' 回転';
+            console.log(`[DEBUG] ポンプ${pump}のトータル回転数表示を更新: ${data.total_revolutions} 回転`);
+          } else {
+            console.warn(`[ERROR] ポンプ${pump}のトータル回転数表示要素が見つかりません`);
+          }
+        } else {
+          console.error(`[ERROR] トータル回転数取得失敗: ${data.message}`);
+          if (totalRevolutionsDisplay) {
+            totalRevolutionsDisplay.textContent = 'エラー';
+          }
+        }
+      } catch (error) {
+        console.error(`[ERROR] トータル回転数取得エラー:`, error);
+        const totalRevolutionsDisplay = document.getElementById('totalRevolutions' + pump);
+        if (totalRevolutionsDisplay) {
+          totalRevolutionsDisplay.textContent = 'エラー';
+        }
       }
     }
 
@@ -1119,11 +1178,11 @@
       // 1秒ごとに漏液検出状態を確認
       setInterval(checkLeakStatus, 1000);
       
-      // 5秒ごとに自動回転数取得（漏液検出のため）
+      // 5秒ごとに自動回転速度取得（漏液検出のため）
       const autoRpmInterval = setInterval(autoGetRpm, 5000);
       
       console.log('漏液検出監視が開始されました');
-      console.log('自動回転数取得（5秒間隔）が開始されました');
+      console.log('自動回転速度取得（5秒間隔）が開始されました');
       console.log('setInterval ID:', autoRpmInterval);
       
       // 初回実行（即座に1回実行）

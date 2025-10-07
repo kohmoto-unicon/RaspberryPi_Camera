@@ -1299,6 +1299,133 @@ def api_get_rpm():
         'command_bytes': list(cmd)  # 送信コマンドの内容を追加
     })
 
+@app.route("/api/get_total_revolutions")
+def api_get_total_revolutions():
+    """トータル回転数取得API（Tコマンド）"""
+    pump = request.args.get("pump", "1")
+    
+    try:
+        pump = int(pump)
+    except ValueError:
+        return jsonify({
+            'success': False,
+            'total_revolutions': 0,
+            'message': f'無効なポンプ番号: {pump}',
+            'command_bytes': []
+        })
+    
+    # トータル回転数取得コマンドを生成（送信前に）
+    value_str = "000000"
+    cmd = bytearray(11)
+    cmd[0] = 0x02
+    
+    # ポンプ番号に応じてコマンド番号を変換
+    if 1 <= pump <= 3:
+        command_pump_no = pump  # そのまま
+    elif 4 <= pump <= 6:
+        command_pump_no = pump - 3  # 4→1, 5→2, 6→3
+    else:
+        return jsonify({
+            'success': False,
+            'total_revolutions': 0,
+            'message': f'無効なポンプ番号: {pump}',
+            'command_bytes': []
+        })
+    
+    cmd[1] = ord(str(command_pump_no))  # 変換されたコマンド番号を使用
+    cmd[2] = ord("T")  # トータル回転数取得コマンド
+    for i, c in enumerate(value_str):
+        cmd[3 + i] = ord(c)
+    cmd[9] = calc_checksum(cmd)
+    cmd[10] = 0x03
+    
+    # トータル回転数取得コマンドを送信
+    success = send_serial_command(pump, "T", "000000")
+    
+    if not success:
+        return jsonify({
+            'success': False,
+            'total_revolutions': 0,
+            'message': '送信失敗',
+            'command_bytes': list(cmd)  # 送信コマンドの内容を追加
+        })
+    
+    # 応答を待機（最大1秒）
+    import time
+    start_time = time.time()
+    response = None
+    
+    # ポンプ番号に応じて適切なシリアルポートを選択
+    if 1 <= pump <= 3:
+        target_ser = ser_1
+        port_name = f"COM1-3({SERIAL_PORT_1})"
+    elif 4 <= pump <= 6:
+        target_ser = ser_2
+        port_name = f"COM4-6({SERIAL_PORT_2})"
+    else:
+        return jsonify({
+            'success': False,
+            'total_revolutions': 0,
+            'message': f'無効なポンプ番号: {pump}',
+            'command_bytes': list(cmd)
+        })
+    
+    while time.time() - start_time < 1.0:
+        if target_ser.in_waiting >= 10:
+            response = target_ser.read(10)
+            break
+        time.sleep(0.01)
+    
+    if response and len(response) == 10:
+        # 応答を解析（STX + ポンプNo + 回転数(6桁16進数) + CS + ETX）
+        if response[0] == 0x02 and response[9] == 0x03:
+            # チェックサム検証
+            checksum = 0
+            for i in range(1, 8):
+                checksum ^= response[i]
+            
+            if checksum == response[8]:
+                # 16進数文字列を抽出（2-7バイト目）
+                hex_str = response[2:8].decode('ascii', errors='ignore')
+                try:
+                    # 16進数を10進数に変換
+                    total_revolutions = int(hex_str, 16)
+                    return jsonify({
+                        'success': True,
+                        'total_revolutions': total_revolutions,
+                        'hex_value': hex_str,
+                        'message': f'トータル回転数取得成功: {total_revolutions} 回転 (16進数: {hex_str})',
+                        'command_bytes': list(cmd)  # 送信コマンドの内容を追加
+                    })
+                except ValueError:
+                    return jsonify({
+                        'success': False,
+                        'total_revolutions': 0,
+                        'message': f'回転数データ解析エラー: {hex_str}',
+                        'command_bytes': list(cmd)
+                    })
+            else:
+                return jsonify({
+                    'success': False,
+                    'total_revolutions': 0,
+                    'message': f'チェックサムエラー: 期待値={checksum}, 受信値={response[8]}',
+                    'command_bytes': list(cmd)
+                })
+        else:
+            return jsonify({
+                'success': False,
+                'total_revolutions': 0,
+                'message': f'応答フォーマットエラー: STX={response[0]}, ETX={response[9]}',
+                'command_bytes': list(cmd)
+            })
+    else:
+        return jsonify({
+            'success': False,
+            'total_revolutions': 0,
+            'message': '応答タイムアウト',
+            'command_bytes': list(cmd)  # 送信コマンドの内容を追加
+        })
+
 @app.route("/api/syringe_pump_control")
 def api_syringe_pump_control():
     """シリンジポンプ制御API"""

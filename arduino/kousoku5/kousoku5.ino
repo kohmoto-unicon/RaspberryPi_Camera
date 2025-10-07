@@ -1,7 +1,8 @@
 #include <avr/io.h>
 #include <avr/interrupt.h>
+#include <avr/eeprom.h>
 #include <math.h>
-//とりあえず0.1完成
+//とりあえず0.1完成ｚ
 
 // デバッグLEDピン設定
 const int debugLedPin = 52;
@@ -117,6 +118,16 @@ enum PumpState {
 
 // 3台のポンプの状態を格納する配列
 volatile PumpState pumpStates[3] = {PUMP_STOPPED, PUMP_STOPPED, PUMP_STOPPED};
+
+// ==== EEPROMステップ数管理 ====
+// 各モーターの累積ステップ数を保存する変数
+volatile unsigned long totalSteps[3] = {0, 0, 0};
+// EEPROMアドレス定義（各モーター用に4バイトずつ確保）
+const int EEPROM_ADDR_MOTOR1 = 0;
+const int EEPROM_ADDR_MOTOR2 = 4;
+const int EEPROM_ADDR_MOTOR3 = 8;
+// 400ステップ = 1回転
+const unsigned long STEPS_PER_REVOLUTION = 400;
 
 // ==== Valve制御遅延管理 ====
 // Valve制御の遅延タイプ
@@ -262,6 +273,53 @@ void processValveDelays() {
   }
 }
 
+// ===================== EEPROMステップ数管理関数 =====================
+// EEPROMから指定モーターの累積ステップ数を読み込む
+void loadStepsFromEEPROM(int motorIdx) {
+  if (motorIdx < 0 || motorIdx >= 3) return;
+  
+  unsigned long steps;
+  int eepromAddr;
+  
+  switch (motorIdx) {
+    case 0: eepromAddr = EEPROM_ADDR_MOTOR1; break;
+    case 1: eepromAddr = EEPROM_ADDR_MOTOR2; break;
+    case 2: eepromAddr = EEPROM_ADDR_MOTOR3; break;
+    default: return;
+  }
+  
+  eeprom_read_block(&steps, (void*)eepromAddr, sizeof(unsigned long));
+  totalSteps[motorIdx] = steps;
+}
+
+// EEPROMに指定モーターの累積ステップ数を書き込む
+void saveStepsToEEPROM(int motorIdx) {
+  if (motorIdx < 0 || motorIdx >= 3) return;
+  
+  int eepromAddr;
+  
+  switch (motorIdx) {
+    case 0: eepromAddr = EEPROM_ADDR_MOTOR1; break;
+    case 1: eepromAddr = EEPROM_ADDR_MOTOR2; break;
+    case 2: eepromAddr = EEPROM_ADDR_MOTOR3; break;
+    default: return;
+  }
+  
+  eeprom_write_block(&totalSteps[motorIdx], (void*)eepromAddr, sizeof(unsigned long));
+}
+
+
+// 累積ステップ数を回転数に変換（16進数で最大化）
+unsigned long stepsToRevolutionsHex(int motorIdx) {
+  if (motorIdx < 0 || motorIdx >= 3) return 0;
+  
+  noInterrupts();
+  unsigned long steps = totalSteps[motorIdx];
+  interrupts();
+  
+  return steps / STEPS_PER_REVOLUTION;
+}
+
 // ===================== ポンプ状態管理関数 =====================
 // ポンプの状態を更新する関数
 void updatePumpState(int idx) {
@@ -310,6 +368,11 @@ void stopAllPumps() {
     updatePumpState(i);
   }
   interrupts();
+  
+  // 全ポンプ停止時にEEPROMに累積ステップ数を保存
+  for (int i = 0; i < 3; i++) {
+    saveStepsToEEPROM(i);
+  }
   
   // 全ポンプ停止後にバルブを閉じる（ただし、バルブ常時OpenフラグがONのものは除く）
   for (int i = 0; i < 3; i++) {
@@ -655,15 +718,25 @@ inline void handleStep(int idx) {
     if (remainingSteps[idx] > 0) {
       remainingSteps[idx]--;
       if (planActive[idx]) { planStepsDone[idx]++; }
+      
+      // 累積ステップ数を更新（割り込み内で直接処理）
+      totalSteps[idx]++;
+      
       if (remainingSteps[idx] == 0) {
         digitalWrite(enaPins[idx], HIGH);  // 励磁OFF
         motorEnabled[idx] = false;
         planActive[idx] = false;
         updatePumpState(idx); // ポンプ状態を更新
         
+        // 停止時にEEPROMに累積ステップ数を保存
+        saveStepsToEEPROM(idx);
+        
         // 非同期Valve遅延管理を開始（モーター自動停止 → 0.5秒後 → Valve閉鎖）
         startValveDelay(idx, VALVE_DELAY_CLOSE_AFTER, false, false, 0);
       }
+    } else {
+      // 無限動作の場合も累積ステップ数を更新（割り込み内で直接処理）
+      totalSteps[idx]++;
     }
 
     // 事前に要求されたインターバル更新を反映（CTCの連続性を保つ）
@@ -1181,6 +1254,9 @@ void processCommand(byte* cmd) {
     resetPrecomputedArray(idx); // 事前計算配列をリセット
     updatePumpState(idx); // ポンプ状態を更新
     
+    // 停止時にEEPROMに累積ステップ数を保存
+    saveStepsToEEPROM(idx);
+    
     // バルブ常時OpenフラグがONの場合、バルブを閉じない
     if (!valveNormallyOpen[idx]) {
       // 非同期Valve遅延管理を開始（モーター停止 → 0.5秒後 → Valve閉鎖）
@@ -1390,6 +1466,43 @@ void processCommand(byte* cmd) {
     lcdClear();
     lcdPrint("Valve Status");
     displaySerialSend("VALVE", response, 10);
+  } else if (action == 'T') {  // 累積回転数取得（16進数）
+    // STX + ポンプNo + 回転数(6桁16進数) + CS + ETX の形式で送信
+    char response[11];
+    response[0] = 0x02;  // STX
+    response[1] = pumpNo + '0';  // ポンプ番号
+    
+    // 累積ステップ数を回転数に変換（16進数で最大化）
+    unsigned long revolutions = stepsToRevolutionsHex(pumpNo - 1);
+    
+    // 6桁16進数で整形（FFFFFFまで表現可能 = 16,777,215回転）
+    char hexStr[7];
+    sprintf(hexStr, "%06lX", revolutions); // 6桁固定で左側を0埋め、大文字16進数
+    
+    // 回転数データをコピー
+    for (int i = 0; i < 6; i++) {
+      response[2 + i] = hexStr[i];
+    }
+    
+    // チェックサム計算（1-7バイト目: ポンプ番号1バイト + 回転数6バイト）
+    byte checksum = 0;
+    for (int i = 1; i <= 7; i++) {
+      checksum ^= response[i];
+    }
+    response[8] = checksum;
+    
+    response[9] = 0x03;  // ETX
+    
+    // 応答を送信
+    Serial.write(response, 10);
+    
+    // LCD表示
+    lcdClear();
+    lcdPrint("Total Revolutions");
+    lcdSetCursor(0, 1);
+    lcdPrint("HEX: ");
+    lcdPrint(hexStr);
+    displaySerialSend("TOTAL", response, 10);
   }
 }
 
@@ -1446,6 +1559,11 @@ void setup() {
   
   // 台形加速配列の初期化（起動時に1回だけ）
   initializeTrapezoidArrays();
+  
+  // EEPROMから累積ステップ数を読み込み
+  for (int i = 0; i < 3; i++) {
+    loadStepsFromEEPROM(i);
+  }
   
   // 初期ポンプ状態を設定
   for (int i = 0; i < 3; i++) {
