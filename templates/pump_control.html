@@ -933,6 +933,22 @@
       }
     }
 
+    // トータル回転数をローカルストレージに保存
+    function saveTotalRevolutions(pump, revolutions) {
+      const key = `pump_${pump}_total_revolutions`;
+      localStorage.setItem(key, revolutions.toString());
+      console.log(`トータル回転数を保存: ポンプ${pump} = ${revolutions} 回転`);
+    }
+
+    // トータル回転数をローカルストレージから取得
+    function getTotalRevolutionsFromStorage(pump) {
+      const key = `pump_${pump}_total_revolutions`;
+      const saved = localStorage.getItem(key);
+      const revolutions = saved !== null ? parseInt(saved, 10) : 0;
+      console.log(`トータル回転数を取得: ポンプ${pump} = ${revolutions} 回転`);
+      return revolutions;
+    }
+
     // トータル回転数取得
     async function getTotalRevolutions(pump){
       console.log(`[DEBUG] getTotalRevolutions呼び出し: ポンプ${pump}, isAutoSending=${isAutoSending}`);
@@ -964,8 +980,11 @@
         
         if (data.success) {
           if (totalRevolutionsDisplay) {
-            totalRevolutionsDisplay.textContent = data.total_revolutions + ' 回転';
-            console.log(`[DEBUG] ポンプ${pump}のトータル回転数表示を更新: ${data.total_revolutions} 回転`);
+            const revolutions = data.total_revolutions;
+            totalRevolutionsDisplay.textContent = revolutions + ' 回転';
+            // 取得した値をローカルストレージに保存
+            saveTotalRevolutions(pump, revolutions);
+            console.log(`[DEBUG] ポンプ${pump}のトータル回転数表示を更新: ${revolutions} 回転`);
           } else {
             console.warn(`[ERROR] ポンプ${pump}のトータル回転数表示要素が見つかりません`);
           }
@@ -984,14 +1003,21 @@
       }
     }
 
-    // 初回起動かどうかをチェックする関数
-    function isFirstVisit() {
-      const firstVisitKey = 'pump_control_first_visit';
-      const isFirst = !localStorage.getItem(firstVisitKey);
-      if (isFirst) {
-        localStorage.setItem(firstVisitKey, 'false');
+    // ブラウザ立ち上げかどうかをチェックする関数
+    function isBrowserStartup() {
+      // セッションストレージでページ切り替えかブラウザ立ち上げかを判定
+      const sessionKey = 'pump_control_session_active';
+      const isNewSession = !sessionStorage.getItem(sessionKey);
+      
+      if (isNewSession) {
+        // 新しいセッションの場合、セッションストレージにマークを設定
+        sessionStorage.setItem(sessionKey, 'true');
+        console.log('新しいブラウザセッションを検出しました');
+        return true;
+      } else {
+        console.log('既存のブラウザセッション内でのページ切り替えです');
+        return false;
       }
-      return isFirst;
     }
 
     // スイッチの状態をリセットする関数
@@ -1066,6 +1092,26 @@
       }
       
       console.log('スイッチの状態復元完了');
+    }
+
+    // トータル回転数を復元する関数
+    function restoreTotalRevolutions() {
+      console.log('トータル回転数を復元中...');
+      
+      // 各ポンプのトータル回転数を復元
+      for (let pump = 1; pump <= 6; pump++) {
+        const savedRevolutions = getTotalRevolutionsFromStorage(pump);
+        const totalRevolutionsDisplay = document.getElementById('totalRevolutions' + pump);
+        
+        if (totalRevolutionsDisplay) {
+          totalRevolutionsDisplay.textContent = savedRevolutions + ' 回転';
+          console.log(`ポンプ${pump}のトータル回転数を復元: ${savedRevolutions} 回転`);
+        } else {
+          console.warn(`ポンプ${pump}のトータル回転数表示要素が見つかりません`);
+        }
+      }
+      
+      console.log('トータル回転数の復元完了');
     }
 
     // Choices.jsを初期化する関数
@@ -1153,14 +1199,17 @@
         console.log(`[DEBUG] 要素${i}: id="${allRpmElements[i].id}", text="${allRpmElements[i].textContent}"`);
       }
       
-      // 初回起動かどうかをチェックして、スイッチの状態を処理
-      if (isFirstVisit()) {
-        console.log('初回起動のため、スイッチの状態をリセットします');
+      // ブラウザ立ち上げかどうかをチェックして、スイッチの状態を処理
+      if (isBrowserStartup()) {
+        console.log('ブラウザ立ち上げのため、スイッチの状態をリセットします');
         resetSwitchStates();
       } else {
-        console.log('2回目以降の起動のため、スイッチの状態を復元します');
+        console.log('ページ切り替えのため、スイッチの状態を復元します');
         restoreSwitchStates();
       }
+      
+      // トータル回転数を常に復元（ブラウザ立ち上げ時もページ切り替え時も）
+      restoreTotalRevolutions();
       
       // 漏液検出状態を初期化
       window.leakDetected = false;
