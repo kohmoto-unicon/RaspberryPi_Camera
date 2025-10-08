@@ -4,6 +4,15 @@
 ラズパイ公式カメラモジュール ストリーミングWebサーバー + ポンプ制御
 """
 
+# ========================================
+# ログ出力制御設定
+# ========================================
+# 通信ログを出力する場合はTrueに、出力しない場合はFalseに設定
+DEBUG_SERIAL_LOG = False       # シリアル通信の送受信ログ
+DEBUG_LEAK_LOG = True         # 漏液検出のログ
+DEBUG_SYSTEM_LOG = True       # システム初期化・状態のログ
+DEBUG_STREAM_LOG = False      # ストリーミング関連のログ（通常はFalse推奨）
+
 import os
 import time
 import threading
@@ -115,37 +124,44 @@ def initialize_serial():
     """シリアル通信を初期化（ハイセラポンプ）"""
     global ser_1, ser_2, serial_initialized1, serial_initialized2, ser_pump1, ser_pump2
     
-    print(f"OS: {platform.system()}")
-    print(f"シリアルポート設定:")
-    print(f"  ポンプ1-3用: {SERIAL_PORT_1}")
-    print(f"  ポンプ4-6用: {SERIAL_PORT_2}")
+    if DEBUG_SYSTEM_LOG:
+        print(f"OS: {platform.system()}")
+        print(f"シリアルポート設定:")
+        print(f"  ポンプ1-3用: {SERIAL_PORT_1}")
+        print(f"  ポンプ4-6用: {SERIAL_PORT_2}")
     
     try:
         # ポンプ1-3用ポートの初期化
-        print(f"ポート {SERIAL_PORT_1} を開こうとしています...")
+        if DEBUG_SYSTEM_LOG:
+            print(f"ポート {SERIAL_PORT_1} を開こうとしています...")
         ser_1 = serial.Serial(SERIAL_PORT_1, BAUD_RATE, timeout=1)
         ser_pump1 = ser_1  # クリーンアップ用にser_pump1にも設定
-        print(f"✓ ハイセラポンプ1-3用シリアル通信が正常に初期化されました: {SERIAL_PORT_1}")
+        if DEBUG_SYSTEM_LOG:
+            print(f"✓ ハイセラポンプ1-3用シリアル通信が正常に初期化されました: {SERIAL_PORT_1}")
         serial_initialized1 = True
     except Exception as e:
-        print(f"✗ ハイセラポンプ1-3用シリアル通信初期化エラー: {e}")
-        if not IS_WINDOWS:
-            print("   → デバイスが接続されているか確認してください")
-            print("   → デバイス権限があるか確認してください（sudoが必要な場合があります）")
+        if DEBUG_SYSTEM_LOG:
+            print(f"✗ ハイセラポンプ1-3用シリアル通信初期化エラー: {e}")
+            if not IS_WINDOWS:
+                print("   → デバイスが接続されているか確認してください")
+                print("   → デバイス権限があるか確認してください（sudoが必要な場合があります）")
         serial_initialized1 = False
 
     try:
         # ポンプ4-6用ポートの初期化
-        print(f"ポート {SERIAL_PORT_2} を開こうとしています...")
+        if DEBUG_SYSTEM_LOG:
+            print(f"ポート {SERIAL_PORT_2} を開こうとしています...")
         ser_2 = serial.Serial(SERIAL_PORT_2, BAUD_RATE, timeout=1)
         ser_pump2 = ser_2  # クリーンアップ用にser_pump2にも設定
-        print(f"✓ ハイセラポンプ4-6用シリアル通信が正常に初期化されました: {SERIAL_PORT_2}")
+        if DEBUG_SYSTEM_LOG:
+            print(f"✓ ハイセラポンプ4-6用シリアル通信が正常に初期化されました: {SERIAL_PORT_2}")
         serial_initialized2 = True
     except Exception as e:
-        print(f"✗ ハイセラポンプ4-6用シリアル通信初期化エラー: {e}")
-        if not IS_WINDOWS:
-            print("   → デバイスが接続されているか確認してください")
-            print("   → デバイス権限があるか確認してください（sudoが必要な場合があります）")
+        if DEBUG_SYSTEM_LOG:
+            print(f"✗ ハイセラポンプ4-6用シリアル通信初期化エラー: {e}")
+            if not IS_WINDOWS:
+                print("   → デバイスが接続されているか確認してください")
+                print("   → デバイス権限があるか確認してください（sudoが必要な場合があります）")
         serial_initialized2 = False
 
     # 両方の初期化結果を返す
@@ -155,7 +171,8 @@ def initialize_syringe_serial():
     """シリアル通信を初期化（シリンジポンプ）"""
     global ser_syringe, syringe_serial_initialized, syringe_pump_controllers
     
-    print(f"シリンジポンプ用ポート: {SYRINGE_SERIAL_PORT}")
+    if DEBUG_SYSTEM_LOG:
+        print(f"シリンジポンプ用ポート: {SYRINGE_SERIAL_PORT}")
     
     try:
         ser_syringe = serial.Serial(SYRINGE_SERIAL_PORT, SYRINGE_BAUD_RATE, timeout=1)
@@ -167,14 +184,16 @@ def initialize_syringe_serial():
             controller = SyringePumpController(i, ser_syringe)
             syringe_pump_controllers.append(controller)
         
-        print(f"✓ シリンジポンプ用シリアル通信が正常に初期化されました: {SYRINGE_SERIAL_PORT}")
-        print(f"✓ 6個のポンプ制御インスタンスを作成しました")
+        if DEBUG_SYSTEM_LOG:
+            print(f"✓ シリンジポンプ用シリアル通信が正常に初期化されました: {SYRINGE_SERIAL_PORT}")
+            print(f"✓ 6個のポンプ制御インスタンスを作成しました")
         return True
     except Exception as e:
-        print(f"✗ シリンジポンプ用シリアル通信初期化エラー: {e}")
-        if not IS_WINDOWS:
-            print("   → デバイスが接続されているか確認してください")
-            print("   → デバイス権限があるか確認してください（sudoが必要な場合があります）")
+        if DEBUG_SYSTEM_LOG:
+            print(f"✗ シリンジポンプ用シリアル通信初期化エラー: {e}")
+            if not IS_WINDOWS:
+                print("   → デバイスが接続されているか確認してください")
+                print("   → デバイス権限があるか確認してください（sudoが必要な場合があります）")
         syringe_serial_initialized = False
         return False
 
@@ -187,7 +206,8 @@ def check_leak_detection():
     if ser_1 and serial_initialized1:
         if ser_1.in_waiting >= 10:
             data = ser_1.read(10)
-            print(f"[LEAK CHECK] {SERIAL_PORT_1} 受信データ: {data.hex()} ({len(data)} bytes)")
+            if DEBUG_LEAK_LOG:
+                print(f"[LEAK CHECK] {SERIAL_PORT_1} 受信データ: {data.hex()} ({len(data)} bytes)")
             
             # 漏液検出コマンドのチェック
             if len(data) >= 10 and data[0] == 0x02 and data[2] == ord('Z') and data[9] == 0x03:
@@ -197,17 +217,20 @@ def check_leak_detection():
                     checksum ^= data[i]
                 
                 if checksum == data[8]:
-                    print(f"[LEAK CHECK] 漏液検出コマンドを受信: {data.hex()}")
+                    if DEBUG_LEAK_LOG:
+                        print(f"[LEAK CHECK] 漏液検出コマンドを受信: {data.hex()}")
                     with leak_detection_lock:
                         leak_detected = True
-                    print("漏液検出コマンドを受信しました！")
+                    if DEBUG_LEAK_LOG:
+                        print("漏液検出コマンドを受信しました！")
                     return True
     
     # ポート2のチェック
     if ser_2 and serial_initialized2:
         if ser_2.in_waiting >= 10:
             data = ser_2.read(10)
-            print(f"[LEAK CHECK] {SERIAL_PORT_2} 受信データ: {data.hex()} ({len(data)} bytes)")
+            if DEBUG_LEAK_LOG:
+                print(f"[LEAK CHECK] {SERIAL_PORT_2} 受信データ: {data.hex()} ({len(data)} bytes)")
             
             # 漏液検出コマンドのチェック
             if len(data) >= 10 and data[0] == 0x02 and data[2] == ord('Z') and data[9] == 0x03:
@@ -217,10 +240,12 @@ def check_leak_detection():
                     checksum ^= data[i]
                 
                 if checksum == data[8]:
-                    print(f"[LEAK CHECK] 漏液検出コマンドを受信: {data.hex()}")
+                    if DEBUG_LEAK_LOG:
+                        print(f"[LEAK CHECK] 漏液検出コマンドを受信: {data.hex()}")
                     with leak_detection_lock:
                         leak_detected = True
-                    print("漏液検出コマンドを受信しました！")
+                    if DEBUG_LEAK_LOG:
+                        print("漏液検出コマンドを受信しました！")
                     return True
     
     return False
@@ -235,10 +260,12 @@ def calc_checksum(data_bytes):
 def send_serial_command(pump_no, action, value="000000"):
     """シリアルコマンドを送信"""
     if (pump_no < 4) and (not serial_initialized1):
-        print("シリアル通信1が初期化されていません")
+        if DEBUG_SERIAL_LOG:
+            print("シリアル通信1が初期化されていません")
         return False
     if (pump_no > 3) and (not serial_initialized2):
-        print("シリアル通信2が初期化されていません")
+        if DEBUG_SERIAL_LOG:
+            print("シリアル通信2が初期化されていません")
         return False
     
     try:
@@ -252,7 +279,8 @@ def send_serial_command(pump_no, action, value="000000"):
             port_name = f"COM4-6({SERIAL_PORT_2})"
             command_pump_no = pump_no - 3  # 4→1, 5→2, 6→3
         else:
-            print(f"無効なポンプ番号: {pump_no}")
+            if DEBUG_SERIAL_LOG:
+                print(f"無効なポンプ番号: {pump_no}")
             return False
         
         value_str = value.zfill(6)
@@ -266,10 +294,12 @@ def send_serial_command(pump_no, action, value="000000"):
         cmd[10] = 0x03
         
         target_ser.write(cmd)
-        print(f"[Pump {pump_no}] {port_name} に送信: {' '.join(f'{b:02X}' for b in cmd)} (コマンド番号: {command_pump_no})")
+        if DEBUG_SERIAL_LOG:
+            print(f"[Pump {pump_no}] {port_name} に送信: {' '.join(f'{b:02X}' for b in cmd)} (コマンド番号: {command_pump_no})")
         return True
     except Exception as e:
-        print(f"シリアル送信エラー: {e}")
+        if DEBUG_SERIAL_LOG:
+            print(f"シリアル送信エラー: {e}")
         return False
 
 def initialize_camera():
@@ -496,7 +526,7 @@ def generate_frames():
                 jpeg_bytes = jpeg_buffer.get()
                 if jpeg_bytes and len(jpeg_bytes) > 0:
                     frame_count += 1
-                    if frame_count % 1000 == 0:
+                    if DEBUG_STREAM_LOG and frame_count % 1000 == 0:
                         print(f"ハードウェア経路で送信: {frame_count}フレーム")
                     yield (b'--frame\r\n'
                            b'Content-Type: image/jpeg\r\n\r\n' + jpeg_bytes + b'\r\n')
@@ -510,13 +540,14 @@ def generate_frames():
                 ret, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
                 if ret:
                     frame_count += 1
-                    if frame_count % 1000 == 0:
+                    if DEBUG_STREAM_LOG and frame_count % 1000 == 0:
                         print(f"ソフトウェア経路で送信: {frame_count}フレーム")
                     yield (b'--frame\r\n'
                            b'Content-Type: image/jpeg\r\n\r\n' + buffer.tobytes() + b'\r\n')
                 else:
                     error_count += 1
-                    print("JPEGエンコードに失敗しました（ソフトウェア経路）")
+                    if DEBUG_STREAM_LOG:
+                        print("JPEGエンコードに失敗しました（ソフトウェア経路）")
             else:
                 error_count += 1
                 if error_count % 10 == 0:
@@ -616,7 +647,8 @@ def setup_ffmpeg_streaming():
                 os.path.join(ffmpeg_temp_dir, 'playlist.m3u8')
             ]
         
-        print(f"FFmpegコマンド: {' '.join(ffmpeg_cmd)}")
+        if DEBUG_SYSTEM_LOG:
+            print(f"FFmpegコマンド: {' '.join(ffmpeg_cmd)}")
         
         # FFmpegプロセスを開始
         ffmpeg_process = subprocess.Popen(
@@ -629,11 +661,13 @@ def setup_ffmpeg_streaming():
         # プロセスが正常に開始されたか確認
         time.sleep(2)  # プロセス開始を待機
         if ffmpeg_process.poll() is None:
-            print("FFmpegストリーミングプロセスが正常に開始されました")
+            if DEBUG_SYSTEM_LOG:
+                print("FFmpegストリーミングプロセスが正常に開始されました")
             return True
         else:
             stdout, stderr = ffmpeg_process.communicate()
-            print(f"FFmpegプロセス開始エラー: {stderr.decode()}")
+            if DEBUG_SYSTEM_LOG:
+                print(f"FFmpegプロセス開始エラー: {stderr.decode()}")
             return False
             
     except Exception as e:
@@ -690,28 +724,34 @@ def cleanup_serial_ports():
     
     try:
         if ser_pump1:
-            print("ハイセラポンプ1-3用シリアルポートを閉じ中...")
+            if DEBUG_SYSTEM_LOG:
+                print("ハイセラポンプ1-3用シリアルポートを閉じ中...")
             ser_pump1.close()
             ser_pump1 = None
             
         if ser_pump2:
-            print("ハイセラポンプ4-6用シリアルポートを閉じ中...")
+            if DEBUG_SYSTEM_LOG:
+                print("ハイセラポンプ4-6用シリアルポートを閉じ中...")
             ser_pump2.close()
             ser_pump2 = None
             
         if ser_syringe:
-            print("シリンジポンプ用シリアルポートを閉じ中...")
+            if DEBUG_SYSTEM_LOG:
+                print("シリンジポンプ用シリアルポートを閉じ中...")
             ser_syringe.close()
             ser_syringe = None
             
         if syringe_pump_controllers:
-            print("シリンジポンプコントローラーをクリア中...")
+            if DEBUG_SYSTEM_LOG:
+                print("シリンジポンプコントローラーをクリア中...")
             syringe_pump_controllers.clear()
             
-        print("シリアルポートのクリーンアップが完了しました")
+        if DEBUG_SYSTEM_LOG:
+            print("シリアルポートのクリーンアップが完了しました")
         
     except Exception as e:
-        print(f"シリアルポートクリーンアップエラー: {e}")
+        if DEBUG_SYSTEM_LOG:
+            print(f"シリアルポートクリーンアップエラー: {e}")
 
 def generate_hls_stream():
     """HLSストリーミング用のプレイリスト生成"""
@@ -784,7 +824,8 @@ def video_feed_hls():
             response.headers['Expires'] = '0'
             return response
         except Exception as e:
-            print(f"HLSプレイリスト送信エラー: {e}")
+            if DEBUG_STREAM_LOG:
+                print(f"HLSプレイリスト送信エラー: {e}")
             return jsonify({'error': 'プレイリストの送信に失敗しました'}), 500
     else:
         return jsonify({'error': 'プレイリストファイルが見つかりません'}), 404
@@ -811,7 +852,8 @@ def hls_segment(segment_name):
             response.headers['Expires'] = '0'
             return response
         except Exception as e:
-            print(f"HLSセグメント送信エラー: {e}")
+            if DEBUG_STREAM_LOG:
+                print(f"HLSセグメント送信エラー: {e}")
             return jsonify({'error': 'セグメントの送信に失敗しました'}), 500
     else:
         return jsonify({'error': 'セグメントファイルが見つかりません'}), 404
@@ -1134,7 +1176,8 @@ def api_get_current():
             'command_bytes': list(cmd)
         })
     
-    print(f"[{port_name}] 電流取得コマンド送信: {cmd.hex()}")
+    if DEBUG_SERIAL_LOG:
+        print(f"[{port_name}] 電流取得コマンド送信: {cmd.hex()}")
     
     # 漏液チェックを先に実行
     check_leak_detection()
@@ -1142,7 +1185,8 @@ def api_get_current():
     while time.time() - start_time < 1.0:
         if target_ser.in_waiting >= 10:  # 10バイトの応答を待機
             response = target_ser.read(10)
-            print(f"[{port_name}] 電流取得応答受信: {response.hex()} ({len(response)} bytes)")
+            if DEBUG_SERIAL_LOG:
+                print(f"[{port_name}] 電流取得応答受信: {response.hex()} ({len(response)} bytes)")
             break
         time.sleep(0.01)
     
@@ -1251,7 +1295,8 @@ def api_get_rpm():
             'command_bytes': list(cmd)
         })
     
-    print(f"[{port_name}] 回転数取得コマンド送信: {cmd.hex()}")
+    if DEBUG_SERIAL_LOG:
+        print(f"[{port_name}] 回転数取得コマンド送信: {cmd.hex()}")
     
     # 漏液チェックを先に実行
     check_leak_detection()
@@ -1260,8 +1305,9 @@ def api_get_rpm():
         if target_ser.in_waiting >= 10:  # 10バイトの応答を待機
             response = target_ser.read(10)
             # 1バイト毎に空白を入れて表示
-            hex_str = ' '.join([f'{b:02X}' for b in response])
-            print(f"[{port_name}] 回転数取得応答受信: {hex_str} ({len(response)} bytes)")
+            if DEBUG_SERIAL_LOG:
+                hex_str = ' '.join([f'{b:02X}' for b in response])
+                print(f"[{port_name}] 回転数取得応答受信: {hex_str} ({len(response)} bytes)")
             break
         time.sleep(0.01)
     
@@ -1763,23 +1809,26 @@ if __name__ == '__main__':
     SYRINGE_SERIAL_PORT = args.syringe_serial_port
     
     # システム情報表示
-    print("=" * 50)
-    print("システム情報:")
-    print(f"OS: {platform.system()} {platform.release()}")
-    print(f"Python: {platform.python_version()}")
-    print(f"カメラライブラリ: {'Picamera2' if PICAMERA_AVAILABLE else 'OpenCV'}")
-    print("=" * 50)
+    if DEBUG_SYSTEM_LOG:
+        print("=" * 50)
+        print("システム情報:")
+        print(f"OS: {platform.system()} {platform.release()}")
+        print(f"Python: {platform.python_version()}")
+        print(f"カメラライブラリ: {'Picamera2' if PICAMERA_AVAILABLE else 'OpenCV'}")
+        print("=" * 50)
     
     # シリアルポート設定表示
-    print("\nシリアルポート設定:")
-    print(f"ハイセラポンプ1-3用: {SERIAL_PORT_1}")
-    print(f"ハイセラポンプ4-6用: {SERIAL_PORT_2}")
-    print(f"シリンジポンプ用: {SYRINGE_SERIAL_PORT}")
-    print("=" * 50)
+    if DEBUG_SYSTEM_LOG:
+        print("\nシリアルポート設定:")
+        print(f"ハイセラポンプ1-3用: {SERIAL_PORT_1}")
+        print(f"ハイセラポンプ4-6用: {SERIAL_PORT_2}")
+        print(f"シリンジポンプ用: {SYRINGE_SERIAL_PORT}")
+        print("=" * 50)
     
     # カメラ初期化前のシステムチェック
-    print("\nカメラ初期化前のシステムチェック...")
-    if not IS_WINDOWS:
+    if DEBUG_SYSTEM_LOG:
+        print("\nカメラ初期化前のシステムチェック...")
+    if not IS_WINDOWS and DEBUG_SYSTEM_LOG:
         try:
             # カメラモジュールの状態確認
             import subprocess
@@ -1817,22 +1866,26 @@ if __name__ == '__main__':
             print(f"✗ OpenCVバージョン確認エラー: {e}")
     
     # カメラ初期化
-    print("\nカメラ初期化を開始します...")
+    if DEBUG_SYSTEM_LOG:
+        print("\nカメラ初期化を開始します...")
     camera_success = initialize_camera()
     
     if camera_success:
-        print(f"✓ カメラ初期化成功: {'Raspberry Pi' if is_raspberry_pi else 'PC'}カメラ")
+        if DEBUG_SYSTEM_LOG:
+            print(f"✓ カメラ初期化成功: {'Raspberry Pi' if is_raspberry_pi else 'PC'}カメラ")
     else:
-        print("✗ カメラ初期化失敗")
-        if PICAMERA_AVAILABLE:
-            print("   → ラズパイにカメラモジュールが接続されているか確認してください")
-            print("   → カメラモジュールの電源が入っているか確認してください")
-            print("   → カメラケーブルが正しく接続されているか確認してください")
-        else:
-            print("   → PCにWebカメラが接続されているか確認してください")
+        if DEBUG_SYSTEM_LOG:
+            print("✗ カメラ初期化失敗")
+            if PICAMERA_AVAILABLE:
+                print("   → ラズパイにカメラモジュールが接続されているか確認してください")
+                print("   → カメラモジュールの電源が入っているか確認してください")
+                print("   → カメラケーブルが正しく接続されているか確認してください")
+            else:
+                print("   → PCにWebカメラが接続されているか確認してください")
     
     # シリアル通信初期化（ハイセラ／シリンジ）
-    print("\nシリアル通信初期化を開始します...")
+    if DEBUG_SYSTEM_LOG:
+        print("\nシリアル通信初期化を開始します...")
     serial_success = initialize_serial()
     syringe_serial_success = initialize_syringe_serial()
     
@@ -1842,13 +1895,13 @@ if __name__ == '__main__':
     print(f"ポンプ制御ページ: http://localhost:{args.port}/pump_control")
     print("=" * 50)
     
-    if not serial_success:
+    if not serial_success and DEBUG_SYSTEM_LOG:
         print("警告: ハイセラポンプ用シリアル通信の初期化に失敗しました。")
         print(f"シリアルポート {SERIAL_PORT_1}（ポンプ1-3用）または {SERIAL_PORT_2}（ポンプ4-6用）が利用可能か確認してください。")
         if not IS_WINDOWS:
             print("   → ラズパイでUSBデバイスが認識されているか確認してください")
             print("   → デバイス権限があるか確認してください")
-    if not syringe_serial_success:
+    if not syringe_serial_success and DEBUG_SYSTEM_LOG:
         print("警告: シリンジポンプ用シリアル通信の初期化に失敗しました。")
         print(f"シリアルポート {SYRINGE_SERIAL_PORT} が利用可能か確認してください。")
         if not IS_WINDOWS:

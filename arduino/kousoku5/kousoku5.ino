@@ -49,6 +49,10 @@ const int valvePins[3] = {40, 41, 42}; // バルブ制御ポート1,2,3
 // 初期値はOFF（false）
 volatile bool valveNormallyOpen[3] = {false, false, false};
 
+// ==== 励磁常時ONフラグ ====
+// 初期値はOFF（false）
+volatile bool excitationAlwaysOn[3] = {false, false, false};
+
 // ==== 基本モータ設定 ====
 const int MICRO_STEP_1_2 = 2; // 1/2ステップ
 const int MICRO_STEP_1_4 = 4; // 1/4ステップ
@@ -365,7 +369,10 @@ void stopAllPumps() {
   noInterrupts();
   for (int i = 0; i < 3; i++) {
     motorEnabled[i] = false;
-    digitalWrite(enaPins[i], HIGH);  // 励磁OFF
+    // 励磁常時ONフラグがOFFの場合のみ励磁をOFFにする
+    if (!excitationAlwaysOn[i]) {
+      digitalWrite(enaPins[i], HIGH);  // 励磁OFF
+    }
     remainingSteps[i] = 0;
     currentSpeedSps[i] = 0.0f;
     planActive[i] = false;
@@ -733,7 +740,10 @@ inline void handleStep(int idx) {
       totalSteps[idx]++;
       
       if (remainingSteps[idx] == 0) {
-        digitalWrite(enaPins[idx], HIGH);  // 励磁OFF
+        // 励磁常時ONフラグがOFFの場合のみ励磁をOFFにする
+        if (!excitationAlwaysOn[idx]) {
+          digitalWrite(enaPins[idx], HIGH);  // 励磁OFF
+        }
         motorEnabled[idx] = false;
         planActive[idx] = false;
         updatePumpState(idx); // ポンプ状態を更新
@@ -1278,7 +1288,12 @@ void processCommand(byte* cmd) {
   } else if (action == 'S') {  // 停止
     // モーターを即座に停止
     motorEnabled[idx] = false;
-    digitalWrite(enaPins[idx], HIGH);  // 励磁OFF
+    
+    // 励磁常時ONフラグがOFFの場合のみ励磁をOFFにする
+    if (!excitationAlwaysOn[idx]) {
+      digitalWrite(enaPins[idx], HIGH);  // 励磁OFF
+    }
+    
     remainingSteps[idx] = 0;
     currentSpeedSps[idx] = 0.0f;
     planActive[idx] = false;
@@ -1337,7 +1352,10 @@ void processCommand(byte* cmd) {
     lcdClear();
     lcdPrint("Receive EnableON");
   } else if (action == 'D') {  // Enable OFF
-    digitalWrite(enaPins[idx], HIGH);
+    // 励磁常時ONフラグがOFFの場合のみ励磁をOFFにする
+    if (!excitationAlwaysOn[idx]) {
+      digitalWrite(enaPins[idx], HIGH);
+    }
     updatePumpState(idx); // ポンプ状態を更新
     
     // バルブ常時OpenフラグがONの場合、バルブを閉じない
@@ -1390,6 +1408,27 @@ void processCommand(byte* cmd) {
       // LCD表示
       lcdClear();
       lcdPrint("Valve Normally Open OFF");
+    }
+  } else if (action == 'L') {  // 励磁常時ON設定（000000:OFF, 000001:ON）
+    if (value == 1) {
+      // 励磁常時ONフラグをONに設定し、ただちに励磁をONする
+      excitationAlwaysOn[idx] = true;
+      digitalWrite(enaPins[idx], LOW);  // 励磁ON
+      updatePumpState(idx);
+      // LCD表示
+      lcdClear();
+      lcdPrint("Excitation Always ON");
+    } else if (value == 0) {
+      // 励磁常時ONフラグをOFFに設定
+      excitationAlwaysOn[idx] = false;
+      // モーターが停止中の場合、励磁をOFFにする
+      if (!motorEnabled[idx]) {
+        digitalWrite(enaPins[idx], HIGH);  // 励磁OFF
+        updatePumpState(idx);
+      }
+      // LCD表示
+      lcdClear();
+      lcdPrint("Excitation Always OFF");
     }
   } else if (action == 'C') {  // 電流データ取得（ダミー応答）
     // STX + ポンプNo + 電流値(符号+5桁整数) + ETX + CS の形式で送信

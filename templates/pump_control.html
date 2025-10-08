@@ -598,6 +598,19 @@
           </div>
           <!-- /新しい弁常時Openスイッチ -->
 
+          <!-- 励磁常時ONスイッチ -->
+          <div class="control-group">
+            <label>励磁常時ON:</label>
+            <div class="input-group">
+              <label class="switch">
+                <input type="checkbox" onchange="toggleExcitation({{ pump }}, this.checked)">
+                <span class="slider"></span>
+              </label>
+              <span class="direction-label" id="excitationLabel{{ pump }}">OFF</span>
+            </div>
+          </div>
+          <!-- /励磁常時ONスイッチ -->
+
           <div class="control-group">
             <label>ステップ数:</label>
             <div class="input-group">
@@ -635,7 +648,7 @@
           </div>
 
           <div class="btn-group">
-            <button class="btn btn-primary" onclick="sendSteps({{ pump }})">送信</button>
+            <button class="btn btn-primary" onclick="sendSteps({{ pump }})">運転</button>
             <button class="btn btn-danger" onclick="sendStop({{ pump }})">停止</button>
           </div>
 
@@ -713,6 +726,17 @@
       sendPumpCommand(pump, 'B', val);
     }
 
+    // 励磁常時ON制御
+    function toggleExcitation(pump, isOn){
+      const val = isOn ? '000001' : '000000';
+      document.getElementById('excitationLabel' + pump).innerText = isOn ? 'ON' : 'OFF';
+      
+      // 状態をローカルストレージに保存
+      saveSwitchState(pump, 'excitation', isOn);
+      
+      sendPumpCommand(pump, 'L', val);
+    }
+
     // 方向切替
     function toggleDirection(pump, isReverse){
       const dir = isReverse ? 'R' : 'F';
@@ -742,10 +766,30 @@
       
       // Choices.jsが初期化されている場合
       if (stepsElement.choices) {
-        steps = stepsElement.choices.getValue().value;
+        const choiceValue = stepsElement.choices.getValue();
+        steps = choiceValue ? choiceValue.value : '';
       } else {
         // 通常のselect要素の場合
         steps = stepsElement.value;
+      }
+      
+      // 未選択または空の場合を先にチェック
+      if (!steps || steps === '' || steps === null || steps === undefined) {
+        console.log(`ポンプ${pump}: ステップ数未選択のため000000を送信します。`);
+        steps = '000000';
+        sendPumpCommand(pump, 'M', steps);
+        return;
+      }
+      
+      // 値の検証：数字として有効かチェック
+      const stepsNum = parseInt(steps, 10);
+      if (isNaN(stepsNum) || stepsNum < 0) {
+        // 無効な値の場合は000000として送信
+        console.log(`ポンプ${pump}: 無効な値 "${steps}" を検出。000000を送信します。`);
+        steps = '000000';
+      } else {
+        // 有効な値の場合はそのまま使用
+        steps = stepsNum.toString();
       }
       
       sendPumpCommand(pump, 'M', steps);
@@ -1188,6 +1232,15 @@
           saveSwitchState(pump, 'valve', false);
           console.log(`ポンプ${pump}の弁常時Openをリセット: OFF`);
         }
+        
+        // 励磁常時ONスイッチをリセット
+        const excitationSwitch = document.querySelector(`input[type="checkbox"][onchange*="toggleExcitation(${pump}"]`);
+        if (excitationSwitch) {
+          excitationSwitch.checked = false;
+          document.getElementById('excitationLabel' + pump).innerText = 'OFF';
+          saveSwitchState(pump, 'excitation', false);
+          console.log(`ポンプ${pump}の励磁常時ONをリセット: OFF`);
+        }
       }
       
       console.log('スイッチの状態リセット完了');
@@ -1224,6 +1277,15 @@
           valveSwitch.checked = valveState;
           document.getElementById('valveLabel' + pump).innerText = valveState ? 'ON' : 'OFF';
           console.log(`ポンプ${pump}の弁常時Openを復元: ${valveState ? 'ON' : 'OFF'}`);
+        }
+        
+        // 励磁常時ONスイッチの復元
+        const excitationState = getSwitchState(pump, 'excitation', false);
+        const excitationSwitch = document.querySelector(`input[type="checkbox"][onchange*="toggleExcitation(${pump}"]`);
+        if (excitationSwitch) {
+          excitationSwitch.checked = excitationState;
+          document.getElementById('excitationLabel' + pump).innerText = excitationState ? 'ON' : 'OFF';
+          console.log(`ポンプ${pump}の励磁常時ONを復元: ${excitationState ? 'ON' : 'OFF'}`);
         }
       }
       
