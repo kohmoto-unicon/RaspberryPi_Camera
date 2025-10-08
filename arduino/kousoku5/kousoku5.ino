@@ -860,10 +860,12 @@ void enableTrapezoidForMotor(int idx, unsigned long totalSteps) {
   usePrecomputed[idx] = true;
   precomputedIndex[idx] = 0;
   
-  // 計画情報を更新
-  planActive[idx] = true;
-  planTotalSteps[idx] = totalSteps;
-  planStepsDone[idx] = 0;
+  // 計画情報を更新（planActiveが既に設定されている場合は上書きしない）
+  if (!planActive[idx]) {
+    planActive[idx] = true;
+    planTotalSteps[idx] = totalSteps;
+    planStepsDone[idx] = 0;
+  }
 }
 
 // 事前計算配列をリセットする関数
@@ -1174,62 +1176,7 @@ void processCommand(byte* cmd) {
   long value = atol(numStr);
 
   if (action == 'M') {  // モータ開始 (0=無限動作)
-    // バルブ常時OpenフラグがONの場合、すでにバルブは開いているので遅延管理は不要
-    if (valveNormallyOpen[idx]) {
-      // モーターを即座に開始
-      digitalWrite(enaPins[idx], LOW); // 励磁ON
-      remainingSteps[idx] = (value > 0) ? value * 2 : 0; // 受信したステップ数の2倍で動作
-      motorEnabled[idx] = true;
-      updatePumpState(idx);
-      
-      // 台形加減速設定
-      if (useTrapezoid[idx]) {
-        // 初回動作時の整合性を確保：現在速度を最小開始速度に設定
-        currentSpeedSps[idx] = minStartSpeedSps;
-        
-        // 目標速度が設定されていない場合は初期値（200rpm）を使用
-        if (targetSpeedSps[idx] < 1.0f) {
-          targetSpeedSps[idx] = rpmToSps(200); // デフォルト200rpm
-        }
-        
-        // 目標速度が最小開始速度より小さい場合は調整
-        if (targetSpeedSps[idx] > 0.0f && targetSpeedSps[idx] < currentSpeedSps[idx]) {
-          currentSpeedSps[idx] = targetSpeedSps[idx];
-        }
-        
-        // 加速度の計算（目標速度への到達時間を考慮）
-        if (targetSpeedSps[idx] > currentSpeedSps[idx]) {
-          float dv = targetSpeedSps[idx] - currentSpeedSps[idx];
-          accelerationSps2[idx] = dv / targetRampTimeSec;
-          if (accelerationSps2[idx] < 1.0f) accelerationSps2[idx] = 1.0f;
-        }
-        
-        // 起動時配列を有効化（有限ステップ数の場合のみ）
-        if (value > 0 && value * 2 <= MAX_TRAPEZOID_STEPS) {
-          enableTrapezoidForMotor(idx, value * 2);
-        } else {
-          usePrecomputed[idx] = false; // 無限動作の場合は従来方式
-        }
-        
-        stepInterval[idx] = spsToIntervalUs(currentSpeedSps[idx]);
-        switch(idx) {
-          case 0: setupTimer3(stepInterval[0]); break;
-          case 1: setupTimer4(stepInterval[1]); break;
-          case 2: setupTimer5(stepInterval[2]); break;
-        }
-      } else {
-        switch(idx) {
-          case 0: setupTimer3(stepInterval[0]); break;
-          case 1: setupTimer4(stepInterval[1]); break;
-          case 2: setupTimer5(stepInterval[2]); break;
-        }
-      }
-    } else {
-      // 非同期Valve遅延管理を開始（Valve開放 → 0.5秒後 → モーター開始）
-      startValveDelay(idx, VALVE_DELAY_OPEN_BEFORE, true, true, (value > 0) ? value * 2 : 0);
-    }
-    
-    // 台形加減速の事前計画を設定（遅延後に実行される）
+    // 台形加減速の事前計画を設定（遅延処理とモーター即座開始の両方で使用）
     if (useTrapezoid[idx]) {
       // ステップ数指定時は台形/三角プロファイルを事前計画
       if (value > 0 && targetSpeedSps[idx] > 0.0f) {
@@ -1280,6 +1227,58 @@ void processCommand(byte* cmd) {
     } else {
       planActive[idx] = false;
       planStepsDone[idx] = 0;
+    }
+    
+    // バルブ常時OpenフラグがONの場合、すでにバルブは開いているので遅延管理は不要
+    if (valveNormallyOpen[idx]) {
+      // モーターを即座に開始
+      digitalWrite(enaPins[idx], LOW); // 励磁ON
+      remainingSteps[idx] = (value > 0) ? value * 2 : 0; // 受信したステップ数の2倍で動作
+      motorEnabled[idx] = true;
+      updatePumpState(idx);
+      
+      // 台形加減速設定
+      if (useTrapezoid[idx]) {
+        // 初回動作時の整合性を確保：現在速度を最小開始速度に設定
+        currentSpeedSps[idx] = minStartSpeedSps;
+        
+        // 目標速度が設定されていない場合は初期値（200rpm）を使用
+        if (targetSpeedSps[idx] < 1.0f) {
+          targetSpeedSps[idx] = rpmToSps(200); // デフォルト200rpm
+        }
+        
+        // 目標速度が最小開始速度より小さい場合は調整
+        if (targetSpeedSps[idx] > 0.0f && targetSpeedSps[idx] < currentSpeedSps[idx]) {
+          currentSpeedSps[idx] = targetSpeedSps[idx];
+        }
+        
+        // 加速度の計算（目標速度への到達時間を考慮）
+        if (targetSpeedSps[idx] > currentSpeedSps[idx]) {
+          float dv = targetSpeedSps[idx] - currentSpeedSps[idx];
+          accelerationSps2[idx] = dv / targetRampTimeSec;
+          if (accelerationSps2[idx] < 1.0f) accelerationSps2[idx] = 1.0f;
+        }
+        
+        // 事前計算配列は使用せず、動的な事前計画のみを使用
+        // （事前計算配列と事前計画のステップ数不整合による二重加速を回避）
+        usePrecomputed[idx] = false;
+        
+        stepInterval[idx] = spsToIntervalUs(currentSpeedSps[idx]);
+        switch(idx) {
+          case 0: setupTimer3(stepInterval[0]); break;
+          case 1: setupTimer4(stepInterval[1]); break;
+          case 2: setupTimer5(stepInterval[2]); break;
+        }
+      } else {
+        switch(idx) {
+          case 0: setupTimer3(stepInterval[0]); break;
+          case 1: setupTimer4(stepInterval[1]); break;
+          case 2: setupTimer5(stepInterval[2]); break;
+        }
+      }
+    } else {
+      // 非同期Valve遅延管理を開始（Valve開放 → 0.5秒後 → モーター開始）
+      startValveDelay(idx, VALVE_DELAY_OPEN_BEFORE, true, true, (value > 0) ? value * 2 : 0);
     }
     
     // LCD表示
@@ -1382,10 +1381,9 @@ void processCommand(byte* cmd) {
       planStepsDone[idx] = 0;
       usePrecomputed[idx] = false; // 事前計算配列を無効化
     } else {
-      // 台形加速ON時：起動時配列を有効化
-      if (remainingSteps[idx] > 0 && remainingSteps[idx] <= MAX_TRAPEZOID_STEPS) {
-        enableTrapezoidForMotor(idx, remainingSteps[idx]);
-      }
+      // 台形加速ON時：事前計算配列は使用せず、動的な事前計画のみを使用
+      // （Mコマンドで事前計画が設定される）
+      usePrecomputed[idx] = false;
     }
     // LCD表示
     lcdClear();
