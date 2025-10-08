@@ -1574,6 +1574,61 @@ void processCommand(byte* cmd) {
     lcdPrint("HEX: ");
     lcdPrint(hexStr);
     displaySerialSend("TOTAL", response, 10);
+  } else if (action == 'J') {  // 制御状態取得（全ポンプ）
+    // 全ポンプの状態を返すため、ポンプ番号は無視
+    char response[11];
+    response[0] = 0x02;  // STX
+    response[1] = '1';   // ポンプ番号（形式上必要だが、無視される）
+    
+    // バルブ常時Open状態をビットフィールドで表現
+    // bit 0 (LSB): ポンプ1, bit 1: ポンプ2, bit 2: ポンプ3
+    byte valveBits = 0;
+    for (int i = 0; i < 3; i++) {
+      if (valveNormallyOpen[i]) {
+        valveBits |= (1 << i);
+      }
+    }
+    response[2] = '0' + valveBits;
+    
+    // 励磁常時ON状態をビットフィールドで表現
+    byte excitationBits = 0;
+    for (int i = 0; i < 3; i++) {
+      if (excitationAlwaysOn[i]) {
+        excitationBits |= (1 << i);
+      }
+    }
+    response[3] = '0' + excitationBits;
+    
+    // 台形加速状態をビットフィールドで表現
+    byte trapezoidBits = 0;
+    for (int i = 0; i < 3; i++) {
+      if (useTrapezoid[i]) {
+        trapezoidBits |= (1 << i);
+      }
+    }
+    response[4] = '0' + trapezoidBits;
+    
+    // 未使用部分
+    response[5] = '0';
+    response[6] = '0';
+    response[7] = '0';
+    
+    // チェックサム計算（1-7バイト目）
+    byte checksum = 0;
+    for (int i = 1; i <= 7; i++) {
+      checksum ^= response[i];
+    }
+    response[8] = checksum;
+    
+    response[9] = 0x03;  // ETX
+    
+    // 応答を送信
+    Serial.write(response, 10);
+    
+    // LCD表示
+    lcdClear();
+    lcdPrint("Control Status");
+    displaySerialSend("STATUS", response, 10);
   }
 }
 

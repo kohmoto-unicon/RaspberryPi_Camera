@@ -15,8 +15,8 @@ Read file: arduino/kousoku5/kousoku5.ino
 1. **Webサーバー（Flask）**: メインの制御インターフェース
 2. **カメラシステム**: Raspberry Pi専用カメラまたはPC用Webカメラ
 3. **ポンプ制御システム**: 
-   - ハイセラポンプ（COM18: ポンプ1-3、COM20: ポンプ4-6）
-   - シリンジポンプ（COM19: 6台のポンプ）
+   - ハイセラポンプ（ACM0: ポンプ1-3、ACM1: ポンプ4-6）
+   - シリンジポンプ（USB0: 6台のポンプ）
 4. **Arduino制御**: ステッピングモータの精密制御
 
 ## 処理の流れ
@@ -89,7 +89,7 @@ Read file: arduino/kousoku5/kousoku5.ino
 - **Python 3.10以上**: 仮想環境（venv）での実行を推奨
 
 ## シリアル通信制約
-- **COMポート設定**: Windows環境での固定ポート番号（COM18, COM19, COM20）
+- **ポート設定**: Raspberry Pi環境でのシリアルポート（ACM0, ACM1, USB0）
 - **通信速度**: 9600bps固定
 - **タイムアウト**: 1秒（電流値取得時）
 

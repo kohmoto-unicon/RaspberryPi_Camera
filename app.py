@@ -272,11 +272,11 @@ def send_serial_command(pump_no, action, value="000000"):
         # ポンプ番号に応じて適切なシリアルポートを選択し、コマンド番号を変換
         if 1 <= pump_no <= 3:
             target_ser = ser_1
-            port_name = f"COM1-3({SERIAL_PORT_1})"
+            port_name = f"ACM0({SERIAL_PORT_1})"
             command_pump_no = pump_no  # そのまま
         elif 4 <= pump_no <= 6:
             target_ser = ser_2
-            port_name = f"COM4-6({SERIAL_PORT_2})"
+            port_name = f"ACM1({SERIAL_PORT_2})"
             command_pump_no = pump_no - 3  # 4→1, 5→2, 6→3
         else:
             if DEBUG_SERIAL_LOG:
@@ -893,8 +893,8 @@ def api_status():
         'serial_initialized1': serial_initialized1,  # ハイセラポンプ1-3
         'serial_initialized2': serial_initialized2,  # ハイセラポンプ4-6
         'syringe_serial_initialized': syringe_serial_initialized,
-        'hysera_port1_status': serial_initialized1 and ser_1 is not None,  # COM18（ポンプ1-3）
-        'hysera_port2_status': serial_initialized2 and ser_2 is not None,  # COM20（ポンプ4-6）
+        'hysera_port1_status': serial_initialized1 and ser_1 is not None,  # ACM0（ポンプ1-3）
+        'hysera_port2_status': serial_initialized2 and ser_2 is not None,  # ACM1（ポンプ4-6）
         'leak_detected': leak_detected,  # 漏液検出状態
         'timestamp': time.time()
     })
@@ -1164,10 +1164,10 @@ def api_get_current():
     # ポンプ番号に応じて適切なシリアルポートを選択
     if 1 <= pump <= 3:
         target_ser = ser_1
-        port_name = f"COM1-3({SERIAL_PORT_1})"
+        port_name = f"ACM0({SERIAL_PORT_1})"
     elif 4 <= pump <= 6:
         target_ser = ser_2
-        port_name = f"COM4-6({SERIAL_PORT_2})"
+        port_name = f"ACM1({SERIAL_PORT_2})"
     else:
         return jsonify({
             'success': False,
@@ -1283,10 +1283,10 @@ def api_get_rpm():
     # ポンプ番号に応じて適切なシリアルポートを選択
     if 1 <= pump <= 3:
         target_ser = ser_1
-        port_name = f"COM1-3({SERIAL_PORT_1})"
+        port_name = f"ACM0({SERIAL_PORT_1})"
     elif 4 <= pump <= 6:
         target_ser = ser_2
-        port_name = f"COM4-6({SERIAL_PORT_2})"
+        port_name = f"ACM1({SERIAL_PORT_2})"
     else:
         return jsonify({
             'success': False,
@@ -1404,10 +1404,10 @@ def api_get_total_revolutions():
     # ポンプ番号に応じて適切なシリアルポートを選択
     if 1 <= pump <= 3:
         target_ser = ser_1
-        port_name = f"COM1-3({SERIAL_PORT_1})"
+        port_name = f"ACM0({SERIAL_PORT_1})"
     elif 4 <= pump <= 6:
         target_ser = ser_2
-        port_name = f"COM4-6({SERIAL_PORT_2})"
+        port_name = f"ACM1({SERIAL_PORT_2})"
     else:
         return jsonify({
             'success': False,
@@ -1470,6 +1470,118 @@ def api_get_total_revolutions():
             'total_revolutions': 0,
             'message': '応答タイムアウト',
             'command_bytes': list(cmd)  # 送信コマンドの内容を追加
+        })
+
+@app.route("/api/get_control_status")
+def api_get_control_status():
+    """制御状態取得API（Jコマンド）- 全ポンプの制御状態を取得"""
+    
+    # 制御状態取得コマンドを生成
+    value_str = "000000"
+    cmd = bytearray(11)
+    cmd[0] = 0x02
+    cmd[1] = ord('1')  # ポンプ番号（無視される）
+    cmd[2] = ord("J")  # 制御状態取得コマンド
+    for i, c in enumerate(value_str):
+        cmd[3 + i] = ord(c)
+    cmd[9] = calc_checksum(cmd)
+    cmd[10] = 0x03
+    
+    # シリアルポートがオンラインかチェック
+    if not serial_initialized1:
+        return jsonify({
+            'success': False,
+            'message': 'シリアル通信が初期化されていません',
+            'command_bytes': list(cmd)
+        })
+    
+    # 制御状態取得コマンドを送信（ポート1に送信）
+    success = send_serial_command(1, "J", "000000")
+    
+    if not success:
+        return jsonify({
+            'success': False,
+            'message': '送信失敗',
+            'command_bytes': list(cmd)
+        })
+    
+    # 応答を待機（最大1秒）
+    import time
+    start_time = time.time()
+    response = None
+    
+    target_ser = ser_1
+    port_name = f"ACM0({SERIAL_PORT_1})"
+    
+    if DEBUG_SERIAL_LOG:
+        print(f"[{port_name}] 制御状態取得コマンド送信: {cmd.hex()}")
+    
+    # 漏液チェックを先に実行
+    check_leak_detection()
+    
+    while time.time() - start_time < 1.0:
+        if target_ser.in_waiting >= 10:  # 10バイトの応答を待機
+            response = target_ser.read(10)
+            if DEBUG_SERIAL_LOG:
+                hex_str = ' '.join([f'{b:02X}' for b in response])
+                print(f"[{port_name}] 制御状態取得応答受信: {hex_str} ({len(response)} bytes)")
+            break
+        time.sleep(0.01)
+    
+    if response and len(response) == 10:
+        # 制御状態応答の処理（STX + ポンプNo + VALVE + EXCITATION + TRAPEZOID + 000 + CS + ETX）
+        if response[0] == 0x02 and response[9] == 0x03:
+            # チェックサム検証
+            checksum = 0
+            for i in range(1, 8):
+                checksum ^= response[i]
+            
+            if checksum == response[8]:
+                # 制御状態を解析
+                try:
+                    valve_bits = int(chr(response[2]))  # バルブ常時Open状態
+                    excitation_bits = int(chr(response[3]))  # 励磁常時ON状態
+                    trapezoid_bits = int(chr(response[4]))  # 台形加速状態
+                    
+                    # 各ポンプの状態を配列に展開
+                    valve_status = [(valve_bits & (1 << i)) != 0 for i in range(3)]
+                    excitation_status = [(excitation_bits & (1 << i)) != 0 for i in range(3)]
+                    trapezoid_status = [(trapezoid_bits & (1 << i)) != 0 for i in range(3)]
+                    
+                    return jsonify({
+                        'success': True,
+                        'valve': valve_status,  # [pump1, pump2, pump3]
+                        'excitation': excitation_status,  # [pump1, pump2, pump3]
+                        'trapezoid': trapezoid_status,  # [pump1, pump2, pump3]
+                        'valve_bits': valve_bits,
+                        'excitation_bits': excitation_bits,
+                        'trapezoid_bits': trapezoid_bits,
+                        'message': '制御状態取得完了',
+                        'command_bytes': list(cmd)
+                    })
+                except (ValueError, IndexError) as e:
+                    return jsonify({
+                        'success': False,
+                        'message': f'制御状態解析エラー: {str(e)}',
+                        'command_bytes': list(cmd)
+                    })
+            else:
+                return jsonify({
+                    'success': False,
+                    'message': f'チェックサムエラー: 期待値={checksum}, 受信値={response[8]}',
+                    'command_bytes': list(cmd)
+                })
+        else:
+            return jsonify({
+                'success': False,
+                'message': f'応答フォーマットエラー: STX={response[0]}, ETX={response[9]}',
+                'command_bytes': list(cmd)
+            })
+    else:
+        return jsonify({
+            'success': False,
+            'message': '応答タイムアウト',
+            'command_bytes': list(cmd)
         })
 
 @app.route("/api/syringe_pump_control")

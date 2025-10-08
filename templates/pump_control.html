@@ -669,9 +669,9 @@
       // ポンプ番号に応じてポート名を決定
       let portName;
       if (1 <= pump && pump <= 3) {
-        portName = 'USB0';
+        portName = 'ACM0';
       } else if (4 <= pump && pump <= 6) {
-        portName = 'USB1';
+        portName = 'ACM1';
       } else {
         portName = 'UNKNOWN';
       }
@@ -886,22 +886,22 @@
         const statusIndicator2 = document.getElementById('serialStatus2');
         const statusText2 = document.getElementById('statusText2');
         
-        // COM18（ポンプ1-3）の状態
+        // ACM0（ポンプ1-3）の状態
         if (data.hysera_port1_status) {
           statusIndicator1.style.background = '#28a745';
-          statusText1.textContent = 'USB0（ポンプ1-3）: オンライン';
+          statusText1.textContent = 'ACM0（ポンプ1-3）: オンライン';
         } else {
           statusIndicator1.style.background = '#dc3545';
-          statusText1.textContent = 'USB0（ポンプ1-3）: オフライン';
+          statusText1.textContent = 'ACM0（ポンプ1-3）: オフライン';
         }
         
-        // COM20（ポンプ4-6）の状態
+        // ACM1（ポンプ4-6）の状態
         if (data.hysera_port2_status) {
           statusIndicator2.style.background = '#28a745';
-          statusText2.textContent = 'USB1（ポンプ4-6）: オンライン';
+          statusText2.textContent = 'ACM1（ポンプ4-6）: オンライン';
         } else {
           statusIndicator2.style.background = '#dc3545';
-          statusText2.textContent = 'USB1（ポンプ4-6）: オフライン';
+          statusText2.textContent = 'ACM1（ポンプ4-6）: オフライン';
         }
         
       } catch (error) {
@@ -1197,6 +1197,58 @@
       } else {
         console.log('既存のブラウザセッション内でのページ切り替えです');
         return false;
+      }
+    }
+
+    // 制御状態を取得してスイッチに反映する関数
+    async function loadControlStatus() {
+      console.log('制御状態を取得中...');
+      
+      try {
+        const response = await fetch('/api/get_control_status');
+        const data = await response.json();
+        
+        console.log('制御状態取得結果:', data);
+        
+        if (data.success) {
+          // 各ポンプのスイッチ状態を反映
+          for (let pump = 1; pump <= 3; pump++) {
+            const idx = pump - 1;
+            
+            // バルブ常時Openスイッチ
+            const valveSwitch = document.querySelector(`input[type="checkbox"][onchange*="toggleValve(${pump}"]`);
+            if (valveSwitch) {
+              valveSwitch.checked = data.valve[idx];
+              document.getElementById('valveLabel' + pump).innerText = data.valve[idx] ? 'ON' : 'OFF';
+              saveSwitchState(pump, 'valve', data.valve[idx]);
+              console.log(`ポンプ${pump}のバルブ常時Openを設定: ${data.valve[idx] ? 'ON' : 'OFF'}`);
+            }
+            
+            // 励磁常時ONスイッチ
+            const excitationSwitch = document.querySelector(`input[type="checkbox"][onchange*="toggleExcitation(${pump}"]`);
+            if (excitationSwitch) {
+              excitationSwitch.checked = data.excitation[idx];
+              document.getElementById('excitationLabel' + pump).innerText = data.excitation[idx] ? 'ON' : 'OFF';
+              saveSwitchState(pump, 'excitation', data.excitation[idx]);
+              console.log(`ポンプ${pump}の励磁常時ONを設定: ${data.excitation[idx] ? 'ON' : 'OFF'}`);
+            }
+            
+            // 台形加速スイッチ
+            const accelerationSwitch = document.querySelector(`input[type="checkbox"][onchange*="toggleAccel(${pump}"]`);
+            if (accelerationSwitch) {
+              accelerationSwitch.checked = data.trapezoid[idx];
+              document.getElementById('accelLabel' + pump).innerText = data.trapezoid[idx] ? 'ON' : 'OFF';
+              saveSwitchState(pump, 'acceleration', data.trapezoid[idx]);
+              console.log(`ポンプ${pump}の台形加速を設定: ${data.trapezoid[idx] ? 'ON' : 'OFF'}`);
+            }
+          }
+          
+          console.log('制御状態の反映が完了しました');
+        } else {
+          console.log('制御状態取得失敗:', data.message);
+        }
+      } catch (error) {
+        console.error('制御状態取得エラー:', error);
       }
     }
 
@@ -1574,6 +1626,27 @@
       if (isBrowserStartup()) {
         console.log('ブラウザ立ち上げのため、スイッチの状態をリセットします');
         resetSwitchStates();
+        
+        // シリアル通信の状態を確認後、制御状態を取得
+        checkStatus().then(() => {
+          // 状態確認が完了したら、少し待ってから制御状態を取得
+          setTimeout(async () => {
+            // シリアル通信がオンラインの場合のみ制御状態を取得
+            try {
+              const statusResponse = await fetch('/api/status');
+              const statusData = await statusResponse.json();
+              
+              if (statusData.hysera_port1_status || statusData.hysera_port2_status) {
+                console.log('USB通信がオンラインのため、制御状態を取得します');
+                await loadControlStatus();
+              } else {
+                console.log('USB通信がオフラインのため、制御状態取得をスキップします');
+              }
+            } catch (error) {
+              console.error('USB通信状態確認エラー:', error);
+            }
+          }, 500);  // 500ms待機してから制御状態を取得
+        });
       } else {
         console.log('ページ切り替えのため、スイッチの状態を復元します');
         restoreSwitchStates();
