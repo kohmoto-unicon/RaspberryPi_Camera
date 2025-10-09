@@ -111,7 +111,7 @@ leak_detection_lock = threading.Lock()  # 漏液検出状態の排他制御用
 
 # シリアル通信設定（シリンジポンプ制御用）
 if IS_WINDOWS:
-    SYRINGE_SERIAL_PORT = "COM22"  # Windows環境の場合（シリンジポンプ）
+    SYRINGE_SERIAL_PORT = "COM4"  # Windows環境の場合（シリンジポンプ）
 else:
     SYRINGE_SERIAL_PORT = "/dev/ttyUSB0"  # Linux/Raspberry Pi環境の場合（シリンジポンプ）
 
@@ -1632,13 +1632,17 @@ def api_syringe_pump_control():
             success, command_bytes, response_bytes = controller.send_command("TR", selected_address)
             message = "停止コマンド送信完了" if success else "停止コマンド送信失敗"
         elif action == "loop":
-            # ループコマンド: "P" + 下移動ステップ数 + "D" + 上移動ステップ数 + "G" + ループ数
+            # ループコマンド: バルブ同期ON時は "IP" + 下移動ステップ数 + "OD" + 上移動ステップ数 + "G" + ループ数
+            #                バルブ同期OFF時は "P" + 下移動ステップ数 + "D" + 上移動ステップ数 + "G" + ループ数
             down_steps = request.args.get("downSteps", "3000")
             up_steps = request.args.get("steps", "3000")
             loop_count = request.args.get("loopCount", "0")
-            loop_command = f"IP{down_steps}OD{up_steps}G{loop_count}R"
+            if valve_sync:
+                loop_command = f"IP{down_steps}OD{up_steps}G{loop_count}R"
+            else:
+                loop_command = f"P{down_steps}D{up_steps}G{loop_count}R"
             success, command_bytes, response_bytes = controller.send_command(loop_command, selected_address)
-            message = f"ループコマンド送信完了（下:{down_steps}、上:{up_steps}、ループ:{loop_count}）" if success else "ループコマンド送信失敗"
+            message = f"ループコマンド送信完了（下:{down_steps}、上:{up_steps}、ループ:{loop_count}、バルブ同期: {'ON' if valve_sync else 'OFF'}）" if success else "ループコマンド送信失敗"
         elif action == "qr":
             success, command_bytes, response_bytes = controller.send_command("QR", selected_address)
             message = "ステータス確認コマンド送信完了" if success else "ステータス確認コマンド送信失敗"
@@ -1903,7 +1907,7 @@ if __name__ == '__main__':
     # OSに応じたデフォルトポート設定
     default_port_1 = 'COM18' if IS_WINDOWS else '/dev/ttyACM0'
     default_port_2 = 'COM20' if IS_WINDOWS else '/dev/ttyACM1'
-    default_syringe_port = 'COM19' if IS_WINDOWS else '/dev/ttyUSB0'
+    default_syringe_port = 'COM4' if IS_WINDOWS else '/dev/ttyUSB0'
     
     parser.add_argument('--serial-port-1', type=str, default=default_port_1, 
                        help=f'ハイセラポンプ1-3用シリアルポート（デフォルト: {default_port_1}）')

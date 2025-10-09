@@ -199,6 +199,47 @@
             transform: translateY(-2px); 
             box-shadow: 0 8px 20px rgba(23, 162, 184, 0.4); 
         }
+        
+        /* 詳細設定折りたたみ用スタイル */
+        .advanced-settings-toggle {
+            background: linear-gradient(135deg, #6c757d 0%, #5a6268 100%);
+            color: #fff;
+            border: none;
+            padding: 10px 15px;
+            margin-bottom: 10px;
+            border-radius: 8px;
+            cursor: pointer;
+            width: 100%;
+            text-align: left;
+            font-weight: 600;
+            font-size: 14px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            transition: all 0.3s ease;
+        }
+        .advanced-settings-toggle:hover {
+            background: linear-gradient(135deg, #5a6268 0%, #495057 100%);
+            transform: translateY(-1px);
+            box-shadow: 0 4px 12px rgba(108, 117, 125, 0.3);
+        }
+        .advanced-settings-toggle::after {
+            content: '▼';
+            font-size: 12px;
+            transition: transform 0.3s ease;
+        }
+        .advanced-settings-toggle.collapsed::after {
+            transform: rotate(-90deg);
+        }
+        .advanced-settings {
+            max-height: 0;
+            overflow: hidden;
+            transition: max-height 0.3s ease;
+        }
+        .advanced-settings.expanded {
+            max-height: 500px;
+        }
+        
         .pump-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px; margin-top: 20px; }
         .pump-box { border: 2px solid #e0e0e0; padding: 20px; border-radius: 15px; background: #fff; box-shadow: 0 5px 15px rgba(0,0,0,0.1); transition: all 0.3s ease; }
         .pump-box:hover { transform: translateY(-5px); box-shadow: 0 10px 25px rgba(0,0,0,0.15); }
@@ -350,6 +391,31 @@
                 select.addEventListener('change', () => {
                     localStorage.setItem(key, select.value);
                 });
+                
+                // 詳細設定折りたたみボタン
+                const advancedToggle = document.getElementById(`advancedToggle${pump}`);
+                const advancedSettings = document.getElementById(`advancedSettings${pump}`);
+                if (advancedToggle && advancedSettings) {
+                    // ローカルストレージから状態を復元（デフォルトは折りたたみ）
+                    const savedState = localStorage.getItem(`advancedSettings_${pump}`);
+                    if (savedState === 'expanded') {
+                        advancedSettings.classList.add('expanded');
+                        advancedToggle.classList.remove('collapsed');
+                    }
+                    
+                    advancedToggle.addEventListener('click', () => {
+                        advancedSettings.classList.toggle('expanded');
+                        advancedToggle.classList.toggle('collapsed');
+                        
+                        // 状態をローカルストレージに保存
+                        if (advancedSettings.classList.contains('expanded')) {
+                            localStorage.setItem(`advancedSettings_${pump}`, 'expanded');
+                        } else {
+                            localStorage.setItem(`advancedSettings_${pump}`, 'collapsed');
+                        }
+                    });
+                }
+                
                 // 初期化ボタン
                 const initBtn = document.getElementById(`initBtn${pump}`);
                 if (initBtn) {
@@ -1084,44 +1150,52 @@
                         <button type="button" class="btn btn-position-reset" id="positionResetBtn{{ pump }}" data-pump="{{ pump }}">位置リセット</button>
                     </div>
                     
-                    <div class="speed-control-container">
-                        <select id="speedSelect{{ pump }}" data-pump="{{ pump }}" style="width: 100px; padding: 10px 12px; border: 2px solid #ddd; border-radius: 8px; font-size: 14px;">
-                            <option value="0" selected>0</option>
-                            <option value="100">100</option>
-                            <option value="1000">1000</option>
-                            <option value="custom">カスタム入力...</option>
-                        </select>
-                        <button type="button" class="btn btn-speed-set" id="speedSetBtn{{ pump }}" data-pump="{{ pump }}">初速セット</button>
-                    </div>
+                    <!-- 詳細設定折りたたみボタン -->
+                    <button type="button" class="advanced-settings-toggle collapsed" id="advancedToggle{{ pump }}" data-pump="{{ pump }}">
+                        詳細設定（初速/勾配/最高速度/切れ速度）
+                    </button>
+                    
+                    <!-- 折りたたみ可能な詳細設定セクション -->
+                    <div class="advanced-settings" id="advancedSettings{{ pump }}">
+                        <div class="speed-control-container">
+                            <select id="speedSelect{{ pump }}" data-pump="{{ pump }}" style="width: 100px; padding: 10px 12px; border: 2px solid #ddd; border-radius: 8px; font-size: 14px;">
+                                <option value="0" selected>0</option>
+                                <option value="100">100</option>
+                                <option value="1000">1000</option>
+                                <option value="custom">カスタム入力...</option>
+                            </select>
+                            <button type="button" class="btn btn-speed-set" id="speedSetBtn{{ pump }}" data-pump="{{ pump }}">初速セット</button>
+                        </div>
 
-                    <div class="speed-control-container">
-                        <select id="gradientSelect{{ pump }}" data-pump="{{ pump }}" style="width: 100px; padding: 10px 12px; border: 2px solid #ddd; border-radius: 8px; font-size: 14px;">
-                            <option value="0" selected>0</option>
-                            <option value="100">100</option>
-                            <option value="1000">1000</option>
-                            <option value="custom">カスタム入力...</option>
-                        </select>
-                        <button type="button" class="btn btn-speed-set" id="gradientSetBtn{{ pump }}" data-pump="{{ pump }}">勾配セット</button>
-                    </div>
+                        <div class="speed-control-container">
+                            <select id="gradientSelect{{ pump }}" data-pump="{{ pump }}" style="width: 100px; padding: 10px 12px; border: 2px solid #ddd; border-radius: 8px; font-size: 14px;">
+                                <option value="0" selected>0</option>
+                                <option value="100">100</option>
+                                <option value="1000">1000</option>
+                                <option value="custom">カスタム入力...</option>
+                            </select>
+                            <button type="button" class="btn btn-speed-set" id="gradientSetBtn{{ pump }}" data-pump="{{ pump }}">勾配セット</button>
+                        </div>
 
-                    <div class="speed-control-container">
-                        <select id="maxSpeedSelect{{ pump }}" data-pump="{{ pump }}" style="width: 100px; padding: 10px 12px; border: 2px solid #ddd; border-radius: 8px; font-size: 14px;">
-                            <option value="0" selected>0</option>
-                            <option value="100">100</option>
-                            <option value="1000">1000</option>
-                            <option value="custom">カスタム入力...</option>
-                        </select>
-                        <button type="button" class="btn btn-speed-set" id="maxSpeedSetBtn{{ pump }}" data-pump="{{ pump }}">最高速度</button>
-                    </div>
+                        <div class="speed-control-container">
+                            <select id="maxSpeedSelect{{ pump }}" data-pump="{{ pump }}" style="width: 100px; padding: 10px 12px; border: 2px solid #ddd; border-radius: 8px; font-size: 14px;">
+                                <option value="0" selected>0</option>
+                                <option value="100">100</option>
+                                <option value="1000">1000</option>
+                                <option value="custom">カスタム入力...</option>
+                            </select>
+                            <button type="button" class="btn btn-speed-set" id="maxSpeedSetBtn{{ pump }}" data-pump="{{ pump }}">最高速度</button>
+                        </div>
 
-                    <div class="speed-control-container">
-                        <select id="cutoffSpeedSelect{{ pump }}" data-pump="{{ pump }}" style="width: 100px; padding: 10px 12px; border: 2px solid #ddd; border-radius: 8px; font-size: 14px;">
-                            <option value="0" selected>0</option>
-                            <option value="100">100</option>
-                            <option value="1000">1000</option>
-                            <option value="custom">カスタム入力...</option>
-                        </select>
-                        <button type="button" class="btn btn-speed-set" id="cutoffSpeedSetBtn{{ pump }}" data-pump="{{ pump }}">切れ速度</button>
+                        <div class="speed-control-container">
+                            <select id="cutoffSpeedSelect{{ pump }}" data-pump="{{ pump }}" style="width: 100px; padding: 10px 12px; border: 2px solid #ddd; border-radius: 8px; font-size: 14px;">
+                                <option value="0" selected>0</option>
+                                <option value="100">100</option>
+                                <option value="1000">1000</option>
+                                <option value="custom">カスタム入力...</option>
+                            </select>
+                            <button type="button" class="btn btn-speed-set" id="cutoffSpeedSetBtn{{ pump }}" data-pump="{{ pump }}">切れ速度</button>
+                        </div>
                     </div>
                     
                     <div class="control-group">
