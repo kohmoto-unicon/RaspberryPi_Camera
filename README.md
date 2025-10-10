@@ -112,7 +112,7 @@ chmod +x start.sh
 ./start.sh
 ```
 
-### systemdサービスとして登録
+### systemdサービスとして登録（OS起動時に自動起動）
 
 ```bash
 # サービスファイルをコピー
@@ -121,7 +121,7 @@ sudo cp raspi-camera-streaming.service /etc/systemd/system/
 # systemdを再読み込み
 sudo systemctl daemon-reload
 
-# サービスを有効化
+# サービスを有効化（OS起動時に自動起動）
 sudo systemctl enable raspi-camera-streaming.service
 
 # サービスを起動
@@ -130,6 +130,22 @@ sudo systemctl start raspi-camera-streaming.service
 # 状態確認
 sudo systemctl status raspi-camera-streaming.service
 ```
+
+#### 短縮コマンドで操作（推奨）
+
+サービス管理用の短縮コマンド `app` が使用できます：
+
+```bash
+app start     # サービスを起動
+app stop      # サービスを停止
+app restart   # サービスを再起動
+app status    # 状態を確認
+app enable    # 自動起動を有効化
+app disable   # 自動起動を無効化
+app log       # リアルタイムログを表示
+```
+
+**📘 詳細は [サービス管理ガイド](SERVICE_GUIDE.md) をご覧ください**
 
 ## 🌐 アクセス方法
 
@@ -275,9 +291,11 @@ raspi-camera-streaming/
 ├── packages/             # ダウンロードされたパッケージ（オフライン用）
 ├── templates/
 │   └── index.html        # Webインターフェース
+├── README.md             # このファイル
+├── SERVICE_GUIDE.md      # サービス管理ガイド（自動起動・コマンド操作）
 ├── OFFLINE_INSTALL_GUIDE.md  # オフラインインストールガイド
 ├── INSTALL_GUIDE.md      # インストールガイド
-└── README.md             # このファイル
+└── PROJECT_DOCUMENTATION.md  # プロジェクトドキュメント
 ```
 
 ## 🤝 貢献
