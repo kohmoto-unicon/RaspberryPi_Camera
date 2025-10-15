@@ -1285,28 +1285,66 @@ void processCommand(byte* cmd) {
     lcdClear();
     lcdPrint("Start");
   } else if (action == 'S') {  // 停止
-    // モーターを即座に停止
-    motorEnabled[idx] = false;
+    // 台形減速を考慮して、次の400の倍数＋400ステップで停止
+    noInterrupts();
+    unsigned long currentSteps = totalSteps[idx];
+    interrupts();
     
-    // 励磁常時ONフラグがOFFの場合のみ励磁をOFFにする
-    if (!excitationAlwaysOn[idx]) {
-      digitalWrite(enaPins[idx], HIGH);  // 励磁OFF
-    }
+    // 次の400の倍数を計算
+    unsigned long nextMultiple = ((currentSteps / 400) + 1) * 400;
+    // そこからさらに400ステップ先が停止位置
+    unsigned long targetSteps = nextMultiple + 400;
+    // 現在位置から停止位置までのステップ数
+    unsigned long stepsToStop = targetSteps - currentSteps;
     
-    remainingSteps[idx] = 0;
-    currentSpeedSps[idx] = 0.0f;
-    planActive[idx] = false;
-    planStepsDone[idx] = 0;
-    resetPrecomputedArray(idx); // 事前計算配列をリセット
-    updatePumpState(idx); // ポンプ状態を更新
-    
-    // 停止時にEEPROMに累積ステップ数を保存
-    saveStepsToEEPROM(idx);
-    
-    // バルブ常時OpenフラグがONの場合、バルブを閉じない
-    if (!valveNormallyOpen[idx]) {
-      // 非同期Valve遅延管理を開始（モーター停止 → 0.5秒後 → Valve閉鎖）
-      startValveDelay(idx, VALVE_DELAY_CLOSE_AFTER, false, false, 0);
+    // モーターが動作中の場合
+    if (motorEnabled[idx]) {
+      // 残ステップ数を設定（400の倍数＋400ステップまで動作）
+      remainingSteps[idx] = stepsToStop;
+      
+      // 台形減速を行う場合、減速プロファイルを設定
+      if (useTrapezoid[idx]) {
+        // 減速のための計画を設定
+        planActive[idx] = true;
+        planTotalSteps[idx] = stepsToStop;
+        planStepsDone[idx] = 0;
+        planAccelSteps[idx] = 0; // 加速なし
+        planCruiseSteps[idx] = 0; // 等速なし（すべて減速）
+        planDecelSteps[idx] = stepsToStop; // 全ステップを減速に使用
+        planPeakSpeedSps[idx] = currentSpeedSps[idx]; // 現在速度から減速開始
+        
+        // 事前計算配列はリセット
+        resetPrecomputedArray(idx);
+      } else {
+        // 台形加減速がOFFの場合は計画をクリア（等速で停止位置まで移動）
+        planActive[idx] = false;
+        planStepsDone[idx] = 0;
+        resetPrecomputedArray(idx);
+      }
+      
+      // 停止処理はhandleStep()内で自動的に行われる
+    } else {
+      // モーターが停止中の場合は何もしない
+      // 励磁常時ONフラグがOFFの場合のみ励磁をOFFにする
+      if (!excitationAlwaysOn[idx]) {
+        digitalWrite(enaPins[idx], HIGH);  // 励磁OFF
+      }
+      
+      remainingSteps[idx] = 0;
+      currentSpeedSps[idx] = 0.0f;
+      planActive[idx] = false;
+      planStepsDone[idx] = 0;
+      resetPrecomputedArray(idx);
+      updatePumpState(idx);
+      
+      // 停止時にEEPROMに累積ステップ数を保存
+      saveStepsToEEPROM(idx);
+      
+      // バルブ常時OpenフラグがONの場合、バルブを閉じない
+      if (!valveNormallyOpen[idx]) {
+        // 非同期Valve遅延管理を開始（モーター停止 → 0.5秒後 → Valve閉鎖）
+        startValveDelay(idx, VALVE_DELAY_CLOSE_AFTER, false, false, 0);
+      }
     }
     
     // LCD表示
