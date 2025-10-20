@@ -647,6 +647,41 @@
           </div>
 
           <div class="control-group">
+            <label>速度設定:</label>
+            <div class="input-group">
+              <select id="rpmSetting{{ pump }}" class="steps-select" data-placeholder="RPMを選択">
+                <option value="50">50 rpm</option>
+                <option value="60">60 rpm</option>
+                <option value="70">70 rpm</option>
+                <option value="80">80 rpm</option>
+                <option value="90">90 rpm</option>
+                <option value="100">100 rpm</option>
+                <option value="110">110 rpm</option>
+                <option value="120">120 rpm</option>
+                <option value="130">130 rpm</option>
+                <option value="140">140 rpm</option>
+                <option value="150">150 rpm</option>
+                <option value="160">160 rpm</option>
+                <option value="170">170 rpm</option>
+                <option value="180">180 rpm</option>
+                <option value="190">190 rpm</option>
+                <option value="200" selected>200 rpm</option>
+                <option value="210">210 rpm</option>
+                <option value="220">220 rpm</option>
+                <option value="230">230 rpm</option>
+                <option value="240">240 rpm</option>
+                <option value="250">250 rpm</option>
+                <option value="260">260 rpm</option>
+                <option value="270">270 rpm</option>
+                <option value="280">280 rpm</option>
+                <option value="290">290 rpm</option>
+                <option value="300">300 rpm</option>
+              </select>
+              <button class="btn btn-info" onclick="setGlobalRPM({{ pump }})">設定</button>
+            </div>
+          </div>
+
+          <div class="control-group">
             <label>回転速度:</label>
             <div class="input-group">
               <span id="rpmValue{{ pump }}" class="current-display">0 rpm</span>
@@ -813,6 +848,72 @@
     // 停止
     function sendStop(pump){
       sendPumpCommand(pump, 'S');
+    }
+
+    // グローバル速度設定（全モータ共通）
+    async function setGlobalRPM(pump){
+      const rpmElement = document.getElementById('rpmSetting' + pump);
+      let rpm;
+      
+      // Choices.jsが初期化されている場合
+      if (rpmElement.choices) {
+        const choiceValue = rpmElement.choices.getValue();
+        rpm = choiceValue ? choiceValue.value : '';
+      } else {
+        // 通常のselect要素の場合
+        rpm = rpmElement.value;
+      }
+      
+      // 未選択または空の場合
+      if (!rpm || rpm === '' || rpm === null || rpm === undefined) {
+        alert('RPMを選択してください');
+        return;
+      }
+      
+      // 値の検証：数字として有効かチェック
+      const rpmNum = parseInt(rpm, 10);
+      if (isNaN(rpmNum) || rpmNum < 50 || rpmNum > 300) {
+        alert('有効なRPM値を選択してください（50～300）');
+        return;
+      }
+      
+      // 'W'コマンドで送信（全モータ共通速度設定）
+      console.log(`グローバル速度設定: ${rpmNum} RPM`);
+      await sendPumpCommand(pump, 'W', rpmNum.toString());
+      
+      // 設定成功後、同じグループの他のポンプのRPM選択も同じ値に同期
+      // （ポンプ1～3は互いに同期、ポンプ4～6も互いに同期）
+      syncRPMSettings(pump, rpm);
+    }
+    
+    // RPM設定を他のポンプと同期する関数
+    function syncRPMSettings(sourcePump, rpmValue) {
+      console.log(`RPM設定を同期中: ポンプ${sourcePump}から他のポンプへ ${rpmValue} RPM`);
+      
+      // ポンプ1～3と4～6をそれぞれ同期
+      let startPump, endPump;
+      if (sourcePump >= 1 && sourcePump <= 3) {
+        startPump = 1;
+        endPump = 3;
+      } else if (sourcePump >= 4 && sourcePump <= 6) {
+        startPump = 4;
+        endPump = 6;
+      } else {
+        return; // 範囲外の場合は何もしない
+      }
+      
+      for (let targetPump = startPump; targetPump <= endPump; targetPump++) {
+        if (targetPump === sourcePump) {
+          continue; // 送信元ポンプはスキップ
+        }
+        
+        const targetElement = document.getElementById('rpmSetting' + targetPump);
+        if (targetElement && targetElement.choices) {
+          // Choices.jsのsetChoiceByValueメソッドで値を設定
+          targetElement.choices.setChoiceByValue(rpmValue);
+          console.log(`ポンプ${targetPump}のRPM設定を ${rpmValue} RPM に同期しました`);
+        }
+      }
     }
 
     // RPM取得
@@ -1432,6 +1533,67 @@
           
           // selectElementにchoicesインスタンスを保存
           selectElement.choices = choices;
+        }
+        
+        // RPM設定選択ボックスを初期化
+        const rpmElement = document.getElementById('rpmSetting' + pump);
+        if (rpmElement) {
+          const rpmChoices = new Choices(rpmElement, {
+            searchEnabled: false,
+            searchChoices: false,
+            removeItemButton: false,
+            noResultsText: '結果が見つかりません',
+            noChoicesText: '選択肢がありません',
+            itemSelectText: '',
+            placeholder: true,
+            placeholderValue: 'RPMを選択',
+            allowHTML: false,
+            shouldSort: false,
+            classNames: {
+              containerOuter: 'choices',
+              containerInner: 'choices__inner',
+              input: 'choices__input',
+              inputCloned: 'choices__input--cloned',
+              list: 'choices__list',
+              listItems: 'choices__list--multiple',
+              listSingle: 'choices__list--single',
+              listDropdown: 'choices__list--dropdown',
+              item: 'choices__item',
+              itemSelectable: 'choices__item--selectable',
+              itemDisabled: 'choices__item--disabled',
+              itemChoice: 'choices__item--choice',
+              placeholder: 'choices__placeholder',
+              group: 'choices__group',
+              groupHeading: 'choices__heading',
+              button: 'choices__button',
+              activeState: 'is-active',
+              focusState: 'is-focused',
+              openState: 'is-open',
+              disabledState: 'is-disabled',
+              highlightedState: 'is-highlighted',
+              selectedState: 'is-selected',
+              flippedState: 'is-flipped',
+              loadingState: 'is-loading',
+              noResults: 'has-no-results',
+              noChoices: 'has-no-choices'
+            }
+          });
+          
+          console.log(`ポンプ${pump}のRPM設定Choices.jsを初期化しました`);
+          
+          // rpmElementにchoicesインスタンスを保存
+          rpmElement.choices = rpmChoices;
+          
+          // ポンプ1～6の場合、値が変更されたら同じグループの他のポンプのRPMも同期
+          if (pump >= 1 && pump <= 6) {
+            rpmElement.addEventListener('change', function(event) {
+              const selectedValue = event.target.value;
+              if (selectedValue) {
+                console.log(`ポンプ${pump}のRPM選択が変更されました: ${selectedValue} RPM`);
+                syncRPMSettings(pump, selectedValue);
+              }
+            });
+          }
         }
       }
       

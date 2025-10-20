@@ -59,11 +59,14 @@ const int MICRO_STEP_1_4 = 4; // 1/4ステップ
 const int MICRO_STEP_1_8 = 8; // 1/8ステップ
 const int stepsPerRev = 200 * MICRO_STEP_1_2; // 1回転あたりのマイクロステップ数
 
+// ==== グローバル速度設定 ====
+volatile long globalSpeedRpm = 200; // 全モータ共通の目標速度（デフォルト200rpm、最大300rpm）
+
 // ==== モーター停止処理用フラグ ====
 volatile bool motorStopPending[3] = {false, false, false}; // 停止処理待ちフラグ
 
 // ==== 台形加減速計算カウンター ====
-volatile uint8_t trapezoidCalcCounter[3] = {0, 0, 0}; // 加減速計算の間引きカウンター
+volatile uint8_t trapezoidCalcCounter[3] = {0, 0, 0}; // 加減速計算の間引きカウンター（4回に1回実行）
 
 // ==== シリアル通信用バッファ ====
 byte commandBuffer[11]; // コマンドバッファ
@@ -241,9 +244,9 @@ void processValveDelays() {
             // 初回動作時の整合性を確保：現在速度を最小開始速度に設定
             currentSpeedSps[i] = minStartSpeedSps;
             
-            // 目標速度が設定されていない場合は初期値（200rpm）を使用
+            // 目標速度が設定されていない場合はglobalSpeedRpmを使用
             if (targetSpeedSps[i] < 1.0f) {
-              targetSpeedSps[i] = rpmToSps(200); // デフォルト200rpm
+              targetSpeedSps[i] = rpmToSps(globalSpeedRpm);
             }
             
             // 目標速度が最小開始速度より小さい場合は調整
@@ -786,9 +789,9 @@ inline void handleStep(int idx) {
       updateTimerOCR(idx);
     } else {
       // フォールバック：従来の計算方式（無限動作など）
-      trapezoidCalcCounter[idx] = (trapezoidCalcCounter[idx] + 1) & 0x01; // 0-1の範囲でカウント
+      trapezoidCalcCounter[idx] = (trapezoidCalcCounter[idx] + 1) & 0x03; // 0-3の範囲でカウント
       
-      if (trapezoidCalcCounter[idx] == 0) { // 2回に1回実行
+      if (trapezoidCalcCounter[idx] == 0) { // 4回に1回実行
         updateTrapezoidSpeed(idx);
       }
     }
@@ -806,12 +809,12 @@ inline void updateTimerOCR(int idx) {
 }
 
 // ===================== 台形加速事前計算関数 =====================
-// 起動時に1回だけ実行する台形加速配列の初期化（200rpm、0.2秒立ち上げ）
+// 起動時に1回だけ実行する台形加速配列の初期化（globalSpeedRpm、0.2秒立ち上げ）
 void initializeTrapezoidArrays() {
   if (precomputedInitialized) return; // 既に初期化済みの場合はスキップ
   
-  // 200rpm（1333.3steps/s）への0.2秒立ち上げ用パラメータ
-  float peakSpeed = 1333.3f; // 200rpm = 1333.3steps/s
+  // globalSpeedRpm（デフォルト200rpm）への0.2秒立ち上げ用パラメータ
+  float peakSpeed = rpmToSps(globalSpeedRpm); // globalSpeedRpmをsteps/sに変換
   float accel = (peakSpeed - minStartSpeedSps) / targetRampTimeSec; // 0.2秒で立ち上げ
   
   for (int idx = 0; idx < 3; idx++) {
@@ -884,22 +887,22 @@ void resetPrecomputedArray(int idx) {
 
 // 台形加減速処理を分離（制御精度を保持した軽量化版）
 inline void updateTrapezoidSpeed(int idx) {
-  // 浮動小数点演算を使用（制御精度を保持）
-  float accel = accelerationSps2[idx];
-  if (accel < 1.0f) accel = 1.0f;
-
-  // 初回動作時の整合性チェック
+  // 初回動作時の整合性チェック（早期リターンで処理軽減）
   if (currentSpeedSps[idx] < 1.0f) {
     currentSpeedSps[idx] = minStartSpeedSps;
   }
   
   // 目標速度が設定されていない場合の安全対策
   if (targetSpeedSps[idx] < 1.0f) {
-    targetSpeedSps[idx] = rpmToSps(200); // デフォルト200rpm
+    targetSpeedSps[idx] = rpmToSps(globalSpeedRpm);
   }
 
-  // 半周期の時間 [s] - 元の計算方法を保持
-  float dt = (float)stepInterval[idx] / 2000000.0f;
+  // 浮動小数点演算を使用（制御精度を保持）
+  float accel = accelerationSps2[idx];
+  if (accel < 1.0f) accel = 1.0f;
+
+  // 半周期の時間 [s] - キャッシュして計算回数を削減
+  float dt = (float)stepInterval[idx] * 0.0000005f; // 1/2000000.0f を事前計算
 
   if (remainingSteps[idx] == 0) {
     // 無限動作（残ステップ=0）は従来通り目標速度へ追従
@@ -953,8 +956,9 @@ inline void updateTrapezoidSpeed(int idx) {
   // 次周期用のインターバルを更新（変更があった場合のみ）
   unsigned int newInterval = spsToIntervalUs(currentSpeedSps[idx]);
   if (newInterval > 0 && newInterval != stepInterval[idx]) {
-    stepInterval[idx] = newInterval;
-    updateTimerOCR(idx);
+    // ペンディング機構を使用して、次の割り込み時に更新（他の割り込みへの干渉を最小化）
+    pendingIntervalUs[idx] = newInterval;
+    pendingIntervalUpdate[idx] = true;
   }
 }
 
@@ -1258,9 +1262,9 @@ void processCommand(byte* cmd) {
         // 初回動作時の整合性を確保：現在速度を最小開始速度に設定
         currentSpeedSps[idx] = minStartSpeedSps;
         
-        // 目標速度が設定されていない場合は初期値（200rpm）を使用
+        // 目標速度が設定されていない場合はglobalSpeedRpmを使用
         if (targetSpeedSps[idx] < 1.0f) {
-          targetSpeedSps[idx] = rpmToSps(200); // デフォルト200rpm
+          targetSpeedSps[idx] = rpmToSps(globalSpeedRpm);
         }
         
         // 目標速度が最小開始速度より小さい場合は調整
@@ -1612,6 +1616,58 @@ void processCommand(byte* cmd) {
     lcdClear();
     lcdPrint("Valve Status");
     displaySerialSend("VALVE", response, 10);
+  } else if (action == 'W') {  // グローバル速度設定（全モータ共通、停止中のみ）
+    // すべてのモータが停止中かチェック
+    bool anyMotorRunning = false;
+    for (int i = 0; i < 3; i++) {
+      if (motorEnabled[i] || motorStopPending[i] || valveDelayManagers[i].active) {
+        anyMotorRunning = true;
+        break;
+      }
+    }
+    
+    if (anyMotorRunning) {
+      // どれかのモータが動作中または停止処理中の場合はGコマンドを無視
+      lcdClear();
+      lcdPrint("Motor Running");
+      lcdSetCursor(0, 1);
+      lcdPrint("G cmd ignored");
+    } else if (value > 0) {
+      // 最大速度300rpmでリミット
+      long newSpeed = value;
+      if (newSpeed > 300) {
+        newSpeed = 300;
+      }
+      
+      // グローバル速度を更新
+      globalSpeedRpm = newSpeed;
+      
+      // 全モータの目標速度を更新
+      for (int i = 0; i < 3; i++) {
+        if (useTrapezoid[i]) {
+          targetSpeedSps[i] = rpmToSps(globalSpeedRpm);
+          // 加速度も更新
+          float base = (currentSpeedSps[i] > 1.0f) ? currentSpeedSps[i] : minStartSpeedSps;
+          if (targetSpeedSps[i] > base) {
+            float dv = targetSpeedSps[i] - base;
+            accelerationSps2[i] = dv / targetRampTimeSec;
+            if (accelerationSps2[i] < 1.0f) accelerationSps2[i] = 1.0f;
+          }
+        } else {
+          unsigned int newInterval = rpmToIntervalUs(globalSpeedRpm);
+          stepInterval[i] = newInterval;
+          targetSpeedSps[i] = rpmToSps(globalSpeedRpm);
+        }
+      }
+      
+      // LCD表示
+      lcdClear();
+      lcdPrint("Global Speed");
+      lcdSetCursor(0, 1);
+      char speedStr[17];
+      sprintf(speedStr, "Set: %ld RPM", globalSpeedRpm);
+      lcdPrint(speedStr);
+    }
   } else if (action == 'T') {  // 累積回転数取得（16進数）
     // STX + ポンプNo + 回転数(6桁16進数) + CS + ETX の形式で送信
     char response[11];
@@ -1721,9 +1777,9 @@ void setup() {
     stepPorts[i] = portOutputRegister(digitalPinToPort(pin));
     stepMasks[i] = digitalPinToBitMask(pin);
 
-    // 初期速度 = 200rpm
-    stepInterval[i] = rpmToIntervalUs(200);
-    targetSpeedSps[i] = rpmToSps(200);
+    // 初期速度 = globalSpeedRpm（デフォルト200rpm）
+    stepInterval[i] = rpmToIntervalUs(globalSpeedRpm);
+    targetSpeedSps[i] = rpmToSps(globalSpeedRpm);
   }
 
   // 漏液センサピン設定
