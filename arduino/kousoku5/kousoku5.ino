@@ -59,6 +59,12 @@ const int MICRO_STEP_1_4 = 4; // 1/4ステップ
 const int MICRO_STEP_1_8 = 8; // 1/8ステップ
 const int stepsPerRev = 200 * MICRO_STEP_1_2; // 1回転あたりのマイクロステップ数
 
+// ==== モーター停止処理用フラグ ====
+volatile bool motorStopPending[3] = {false, false, false}; // 停止処理待ちフラグ
+
+// ==== 台形加減速計算カウンター ====
+volatile uint8_t trapezoidCalcCounter[3] = {0, 0, 0}; // 加減速計算の間引きカウンター
+
 // ==== シリアル通信用バッファ ====
 byte commandBuffer[11]; // コマンドバッファ
 int commandIndex = 0;   // バッファのインデックス
@@ -229,6 +235,9 @@ void processValveDelays() {
           
           // 台形加減速設定
           if (useTrapezoid[i]) {
+            // 加減速計算カウンターをリセット
+            trapezoidCalcCounter[i] = 0;
+            
             // 初回動作時の整合性を確保：現在速度を最小開始速度に設定
             currentSpeedSps[i] = minStartSpeedSps;
             
@@ -335,12 +344,14 @@ unsigned long stepsToRevolutionsHex(int motorIdx) {
 }
 
 // ===================== ポンプ状態管理関数 =====================
-// ポンプの状態を更新する関数
+// ポンプの状態を更新する関数（digitalReadを使わない最適化版）
 void updatePumpState(int idx) {
   if (idx < 0 || idx >= 3) return;
   
   bool motorOn = motorEnabled[idx];
-  bool enableOn = (digitalRead(enaPins[idx]) == LOW);
+  // ENAピンの状態を直接読む代わりに、励磁常時ONフラグとモーター状態から判定
+  // 励磁がONの条件：励磁常時ONフラグがON、またはモーターが動作中
+  bool enableOn = excitationAlwaysOn[idx] || motorOn;
   
   if (motorOn && enableOn) {
     pumpStates[idx] = PUMP_RUNNING;
@@ -369,10 +380,6 @@ void stopAllPumps() {
   noInterrupts();
   for (int i = 0; i < 3; i++) {
     motorEnabled[i] = false;
-    // 励磁常時ONフラグがOFFの場合のみ励磁をOFFにする
-    if (!excitationAlwaysOn[i]) {
-      digitalWrite(enaPins[i], HIGH);  // 励磁OFF
-    }
     remainingSteps[i] = 0;
     currentSpeedSps[i] = 0.0f;
     planActive[i] = false;
@@ -382,9 +389,17 @@ void stopAllPumps() {
     pendingIntervalUs[i] = 0;
     // STEPピンをLOWに戻す（安全側）
     *stepPorts[i] &= ~stepMasks[i];
-    updatePumpState(i);
   }
   interrupts();
+  
+  // 励磁とポンプ状態の更新（割り込み外で実行）
+  for (int i = 0; i < 3; i++) {
+    // 励磁常時ONフラグがOFFの場合のみ励磁をOFFにする
+    if (!excitationAlwaysOn[i]) {
+      digitalWrite(enaPins[i], HIGH);  // 励磁OFF
+    }
+    updatePumpState(i);
+  }
   
   // 全ポンプ停止時にEEPROMに累積ステップ数を保存
   for (int i = 0; i < 3; i++) {
@@ -740,19 +755,10 @@ inline void handleStep(int idx) {
       totalSteps[idx]++;
       
       if (remainingSteps[idx] == 0) {
-        // 励磁常時ONフラグがOFFの場合のみ励磁をOFFにする
-        if (!excitationAlwaysOn[idx]) {
-          digitalWrite(enaPins[idx], HIGH);  // 励磁OFF
-        }
+        // モーター停止フラグを立てる（重い処理はloop()で実行）
         motorEnabled[idx] = false;
         planActive[idx] = false;
-        updatePumpState(idx); // ポンプ状態を更新
-        
-        // 停止時にEEPROMに累積ステップ数を保存
-        saveStepsToEEPROM(idx);
-        
-        // 非同期Valve遅延管理を開始（モーター自動停止 → 0.5秒後 → Valve閉鎖）
-        startValveDelay(idx, VALVE_DELAY_CLOSE_AFTER, false, false, 0);
+        motorStopPending[idx] = true; // loop()で停止処理を実行
       }
     } else {
       // 無限動作の場合も累積ステップ数を更新（割り込み内で直接処理）
@@ -780,10 +786,9 @@ inline void handleStep(int idx) {
       updateTimerOCR(idx);
     } else {
       // フォールバック：従来の計算方式（無限動作など）
-      static uint8_t calcCounter[3] = {0, 0, 0};
-      calcCounter[idx] = (calcCounter[idx] + 1) & 0x01; // 0-1の範囲でカウント
+      trapezoidCalcCounter[idx] = (trapezoidCalcCounter[idx] + 1) & 0x01; // 0-1の範囲でカウント
       
-      if (calcCounter[idx] == 0) { // 2回に1回実行
+      if (trapezoidCalcCounter[idx] == 0) { // 2回に1回実行
         updateTrapezoidSpeed(idx);
       }
     }
@@ -1176,6 +1181,14 @@ void processCommand(byte* cmd) {
   long value = atol(numStr);
 
   if (action == 'M') {  // モータ開始 (0=無限動作)
+    // モーターが既に動作中、停止処理待ち、またはバルブ遅延管理でモーター開始待ちの場合はMコマンドを無視
+    if (motorEnabled[idx] || motorStopPending[idx] || valveDelayManagers[idx].active) {
+      // LCD表示
+      lcdClear();
+      lcdPrint("Already Running");
+      return;
+    }
+    
     // 台形加減速の事前計画を設定（遅延処理とモーター即座開始の両方で使用）
     if (useTrapezoid[idx]) {
       // ステップ数指定時は台形/三角プロファイルを事前計画
@@ -1239,6 +1252,9 @@ void processCommand(byte* cmd) {
       
       // 台形加減速設定
       if (useTrapezoid[idx]) {
+        // 加減速計算カウンターをリセット
+        trapezoidCalcCounter[idx] = 0;
+        
         // 初回動作時の整合性を確保：現在速度を最小開始速度に設定
         currentSpeedSps[idx] = minStartSpeedSps;
         
@@ -1285,42 +1301,65 @@ void processCommand(byte* cmd) {
     lcdClear();
     lcdPrint("Start");
   } else if (action == 'S') {  // 停止
-    // 台形減速を考慮して、次の400の倍数＋400ステップで停止
+    // 台形減速を考慮して、加速期間と同じ減速期間で停止
     noInterrupts();
     unsigned long currentSteps = totalSteps[idx];
     interrupts();
     
-    // 次の400の倍数を計算
-    unsigned long nextMultiple = ((currentSteps / 400) + 1) * 400;
-    // そこからさらに400ステップ先が停止位置
-    unsigned long targetSteps = nextMultiple + 400;
-    // 現在位置から停止位置までのステップ数
-    unsigned long stepsToStop = targetSteps - currentSteps;
-    
     // モーターが動作中の場合
     if (motorEnabled[idx]) {
-      // 残ステップ数を設定（400の倍数＋400ステップまで動作）
-      remainingSteps[idx] = stepsToStop;
+      unsigned long stepsToStop = 0;
+      unsigned long decelSteps = 0;
       
       // 台形減速を行う場合、減速プロファイルを設定
       if (useTrapezoid[idx]) {
+        // 現在速度から最小速度まで減速するのに必要なステップ数を計算
+        // decelSteps = (currentSpeed^2 - minSpeed^2) / (2 * acceleration)
+        float a = accelerationSps2[idx];
+        if (a < 1.0f) a = 1.0f;
+        float currentSpeed = currentSpeedSps[idx];
+        if (currentSpeed < minStartSpeedSps) currentSpeed = minStartSpeedSps;
+        
+        float decelStepsF = (currentSpeed * currentSpeed - minStartSpeedSps * minStartSpeedSps) / (2.0f * a);
+        decelSteps = (unsigned long)(decelStepsF + 0.5f);
+        if (decelSteps < 1) decelSteps = 1; // 最小1ステップ
+        
+        // 減速完了後の位置を計算
+        unsigned long decelEndSteps = currentSteps + decelSteps;
+        
+        // 次の400の倍数を計算（減速完了位置以降）
+        unsigned long nextMultiple = ((decelEndSteps / 400) + 1) * 400;
+        
+        // 停止位置までの総ステップ数（減速期間 + 等速期間）
+        stepsToStop = nextMultiple - currentSteps;
+        
+        // 等速期間を計算
+        unsigned long cruiseSteps = (stepsToStop > decelSteps) ? (stepsToStop - decelSteps) : 0;
+        
         // 減速のための計画を設定
         planActive[idx] = true;
         planTotalSteps[idx] = stepsToStop;
         planStepsDone[idx] = 0;
         planAccelSteps[idx] = 0; // 加速なし
-        planCruiseSteps[idx] = 0; // 等速なし（すべて減速）
-        planDecelSteps[idx] = stepsToStop; // 全ステップを減速に使用
+        planCruiseSteps[idx] = cruiseSteps; // 等速期間（減速完了から400の倍数まで）
+        planDecelSteps[idx] = decelSteps; // 加速期間と同じステップ数で減速
         planPeakSpeedSps[idx] = currentSpeedSps[idx]; // 現在速度から減速開始
         
         // 事前計算配列はリセット
         resetPrecomputedArray(idx);
       } else {
-        // 台形加減速がOFFの場合は計画をクリア（等速で停止位置まで移動）
+        // 台形加減速がOFFの場合は、次の400の倍数で停止
+        unsigned long nextMultiple = ((currentSteps / 400) + 1) * 400;
+        stepsToStop = nextMultiple - currentSteps;
+        
+        // 計画をクリア（等速で停止位置まで移動）
         planActive[idx] = false;
         planStepsDone[idx] = 0;
         resetPrecomputedArray(idx);
       }
+      
+      // 残ステップ数を設定
+      remainingSteps[idx] = stepsToStop;
       
       // 停止処理はhandleStep()内で自動的に行われる
     } else {
@@ -1798,6 +1837,27 @@ void loop() {
         lcdSetCursor(0, 1);
         lcdPrint("System Ready");
       }
+    }
+  }
+  
+  // モーター停止処理（割り込み外で実行）
+  for (int i = 0; i < 3; i++) {
+    if (motorStopPending[i]) {
+      motorStopPending[i] = false;
+      
+      // 励磁常時ONフラグがOFFの場合のみ励磁をOFFにする
+      if (!excitationAlwaysOn[i]) {
+        digitalWrite(enaPins[i], HIGH);  // 励磁OFF
+      }
+      
+      // ポンプ状態を更新
+      updatePumpState(i);
+      
+      // 停止時にEEPROMに累積ステップ数を保存
+      saveStepsToEEPROM(i);
+      
+      // 非同期Valve遅延管理を開始（モーター自動停止 → 0.5秒後 → Valve閉鎖）
+      startValveDelay(i, VALVE_DELAY_CLOSE_AFTER, false, false, 0);
     }
   }
 }
