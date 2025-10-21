@@ -768,44 +768,68 @@ inline void handleStep(int idx) {
       totalSteps[idx]++;
     }
 
-    // 事前に要求されたインターバル更新を反映（CTCの連続性を保つ）
-    if (pendingIntervalUpdate[idx]) {
-      pendingIntervalUpdate[idx] = false;
-      if (pendingIntervalUs[idx] > 0) {
-        stepInterval[idx] = pendingIntervalUs[idx];
-        updateTimerOCR(idx);
+    // --- 台形加減速処理（HIGH時のみ実行） ---
+    if (useTrapezoid[idx] && motorEnabled[idx]) {
+      if (usePrecomputed[idx] && precomputedIndex[idx] < precomputedStepCount[idx]) {
+        // 配列アクセスをアトミック化（割り込み禁止で読み取り＆インデックス更新）
+        uint8_t sreg = SREG;
+        cli();  // 割り込み禁止
+        
+        unsigned int currentIndex = precomputedIndex[idx];
+        if (currentIndex < precomputedStepCount[idx]) {
+          stepInterval[idx] = precomputedIntervals[idx][currentIndex];
+          precomputedIndex[idx]++;
+        }
+        
+        SREG = sreg;  // 割り込みレジスタを復元
+        
+        // OCR更新はペンディング機構を使用（LOW時に実行）
+        pendingIntervalUs[idx] = stepInterval[idx];
+        pendingIntervalUpdate[idx] = true;
+      } else {
+        // フォールバック：従来の計算方式（無限動作など）
+        trapezoidCalcCounter[idx] = (trapezoidCalcCounter[idx] + 1) & 0x03; // 0-3の範囲でカウント
+        
+        if (trapezoidCalcCounter[idx] == 0) { // 4回に1回実行
+          updateTrapezoidSpeed(idx);
+        }
       }
     }
   } else {
     *stepPorts[idx] &= ~stepMasks[idx]; // LOW
-  }
-
-  // --- 軽量化された台形加減速処理（配列参照版） ---
-  if (useTrapezoid[idx] && motorEnabled[idx]) {
-    if (usePrecomputed[idx] && precomputedIndex[idx] < precomputedStepCount[idx]) {
-      // 事前計算配列からインターバルを取得（超軽量）
-      stepInterval[idx] = precomputedIntervals[idx][precomputedIndex[idx]];
-      precomputedIndex[idx]++;
-      updateTimerOCR(idx);
-    } else {
-      // フォールバック：従来の計算方式（無限動作など）
-      trapezoidCalcCounter[idx] = (trapezoidCalcCounter[idx] + 1) & 0x03; // 0-3の範囲でカウント
+    
+    // 事前に要求されたインターバル更新を反映（LOW時のみ実行・他モータとの干渉を防止・アトミック化）
+    if (pendingIntervalUpdate[idx]) {
+      uint8_t sreg = SREG;
+      cli();  // 割り込み禁止
       
-      if (trapezoidCalcCounter[idx] == 0) { // 4回に1回実行
-        updateTrapezoidSpeed(idx);
+      if (pendingIntervalUs[idx] > 0) {
+        stepInterval[idx] = pendingIntervalUs[idx];
+        pendingIntervalUpdate[idx] = false;
+      }
+      
+      SREG = sreg;  // 割り込みレジスタを復元
+      
+      if (stepInterval[idx] > 0) {
+        updateTimerOCR(idx);  // 割り込み禁止で保護された安全な更新
       }
     }
   }
 }
 
-// OCRレジスタ更新を最適化した関数
+// OCRレジスタ更新を最適化した関数（割り込み中断で他モータの干渉を防止）
 inline void updateTimerOCR(int idx) {
+  uint8_t sreg = SREG; // 割り込みレジスタを保存
+  cli();               // 割り込み禁止
+  
   uint16_t ocrValue = (uint16_t)((16UL * stepInterval[idx] / 2UL) - 1UL);
   switch (idx) {
     case 0: OCR3A = ocrValue; break;
     case 1: OCR4A = ocrValue; break;
     case 2: OCR5A = ocrValue; break;
   }
+  
+  SREG = sreg; // 割り込みレジスタを復元
 }
 
 // ===================== 台形加速事前計算関数 =====================
@@ -953,12 +977,17 @@ inline void updateTrapezoidSpeed(int idx) {
     }
   }
 
-  // 次周期用のインターバルを更新（変更があった場合のみ）
+  // 次周期用のインターバルを更新（変更があった場合のみ・アトミック化）
   unsigned int newInterval = spsToIntervalUs(currentSpeedSps[idx]);
   if (newInterval > 0 && newInterval != stepInterval[idx]) {
-    // ペンディング機構を使用して、次の割り込み時に更新（他の割り込みへの干渉を最小化）
+    // アトミック化：割り込み禁止で変数を更新
+    uint8_t sreg = SREG;
+    cli();  // 割り込み禁止
+    
     pendingIntervalUs[idx] = newInterval;
     pendingIntervalUpdate[idx] = true;
+    
+    SREG = sreg;  // 割り込みレジスタを復元
   }
 }
 
