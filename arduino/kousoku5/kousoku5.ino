@@ -2,7 +2,6 @@
 #include <avr/interrupt.h>
 #include <avr/eeprom.h>
 #include <math.h>
-//とりあえず0.1完成ｚ
 
 // デバッグLEDピン設定
 const int debugLedPin = 52;
@@ -96,6 +95,12 @@ volatile float targetSpeedSps[3]  = {0.0f, 0.0f, 0.0f}; // 目標速度 [steps/s
 volatile float accelerationSps2[3] = {4000.0f, 4000.0f, 4000.0f}; // 加速度 [steps/s^2]
 const float minStartSpeedSps = 650.0f; // 立ち上がり開始速度（初速）[steps/s]
 const float targetRampTimeSec = 0.2f;  // 初速から目標速度までの到達時間 [s]
+
+// ==== 停止時の減速制御 ====
+volatile bool stopRequested[3] = {false, false, false}; // 停止要求フラグ
+volatile unsigned long decelStepsRequired[3] = {0, 0, 0}; // 減速に必要なステップ数
+volatile unsigned long decelStartStep[3] = {0, 0, 0}; // 減速開始ステップ位置
+volatile bool isDecelerating[3] = {false, false, false}; // 減速中フラグ
 
 // ==== 台形加速事前計算配列 ====
 #define MAX_TRAPEZOID_STEPS 600   // 最大ステップ数（200rpm、0.2秒立ち上げ用）
@@ -260,6 +265,11 @@ void processValveDelays() {
               accelerationSps2[i] = dv / targetRampTimeSec;
               if (accelerationSps2[i] < 1.0f) accelerationSps2[i] = 1.0f;
             }
+            
+            // 事前計算配列を使用（確実に0.2秒で加速）
+            usePrecomputed[i] = true;
+            precomputedIndex[i] = 0;
+            
             stepInterval[i] = spsToIntervalUs(currentSpeedSps[i]);
             switch(i) {
               case 0: setupTimer3(stepInterval[0]); break;
@@ -757,6 +767,21 @@ inline void handleStep(int idx) {
       // 累積ステップ数を更新（割り込み内で直接処理）
       totalSteps[idx]++;
       
+      // 固定回転時：残りステップがわずかになったら減速開始をトリガー
+      if (useTrapezoid[idx] && remainingSteps[idx] > 0 && !stopRequested[idx] && !isDecelerating[idx]) {
+        // 減速に必要なステップ数を計算（毎ステップ4steps/s減速）
+        float currentSpeed = currentSpeedSps[idx];
+        if (currentSpeed < minStartSpeedSps) currentSpeed = minStartSpeedSps;
+        float decelStepsF = (currentSpeed - minStartSpeedSps) / 4.0f;
+        unsigned long decelSteps = (unsigned long)(decelStepsF + 0.5f);
+        if (decelSteps < 1) decelSteps = 1;
+        
+        // 残りステップが減速に必要なステップ数以下になったら減速開始
+        if (remainingSteps[idx] <= decelSteps) {
+          isDecelerating[idx] = true;
+        }
+      }
+      
       if (remainingSteps[idx] == 0) {
         // モーター停止フラグを立てる（重い処理はloop()で実行）
         motorEnabled[idx] = false;
@@ -768,31 +793,51 @@ inline void handleStep(int idx) {
       totalSteps[idx]++;
     }
 
-    // --- 台形加減速処理（HIGH時のみ実行） ---
+    // --- シンプルな台形加速・減速処理（HIGH時のみ実行） ---
     if (useTrapezoid[idx] && motorEnabled[idx]) {
-      if (usePrecomputed[idx] && precomputedIndex[idx] < precomputedStepCount[idx]) {
-        // 配列アクセスをアトミック化（割り込み禁止で読み取り＆インデックス更新）
-        uint8_t sreg = SREG;
-        cli();  // 割り込み禁止
-        
-        unsigned int currentIndex = precomputedIndex[idx];
-        if (currentIndex < precomputedStepCount[idx]) {
-          stepInterval[idx] = precomputedIntervals[idx][currentIndex];
-          precomputedIndex[idx]++;
+      float targetSpeed = rpmToSps(globalSpeedRpm);
+      
+      // 停止要求がある場合、減速開始位置をチェック
+      if (stopRequested[idx] && !isDecelerating[idx]) {
+        if (totalSteps[idx] >= decelStartStep[idx]) {
+          // 減速開始
+          isDecelerating[idx] = true;
+        }
+      }
+      
+      // 減速中の場合
+      if (isDecelerating[idx]) {
+        // 毎ステップ4steps/sずつ減速
+        if (currentSpeedSps[idx] > minStartSpeedSps) {
+          currentSpeedSps[idx] -= 4.0f;
+          if (currentSpeedSps[idx] < minStartSpeedSps) {
+            currentSpeedSps[idx] = minStartSpeedSps;
+          }
         }
         
-        SREG = sreg;  // 割り込みレジスタを復元
-        
-        // OCR更新はペンディング機構を使用（LOW時に実行）
-        pendingIntervalUs[idx] = stepInterval[idx];
-        pendingIntervalUpdate[idx] = true;
+        // 目標速度に達したら停止
+        if (currentSpeedSps[idx] <= minStartSpeedSps) {
+          motorEnabled[idx] = false;
+          motorStopPending[idx] = true;
+          stopRequested[idx] = false;
+          isDecelerating[idx] = false;
+        }
       } else {
-        // フォールバック：従来の計算方式（無限動作など）
-        trapezoidCalcCounter[idx] = (trapezoidCalcCounter[idx] + 1) & 0x03; // 0-3の範囲でカウント
-        
-        if (trapezoidCalcCounter[idx] == 0) { // 4回に1回実行
-          updateTrapezoidSpeed(idx);
+        // 加速中：現在の速度が目標に達するまで加速
+        if (currentSpeedSps[idx] < targetSpeed) {
+          currentSpeedSps[idx] += 4.0f; // 毎ステップ4steps/s増加
+          if (currentSpeedSps[idx] > targetSpeed) {
+            currentSpeedSps[idx] = targetSpeed;
+          }
         }
+      }
+      
+      // 速度からマイクロ秒単位のステップ間隔に変換
+      unsigned int interval = spsToIntervalUs(currentSpeedSps[idx]);
+      
+      if (interval > 0) {
+        pendingIntervalUs[idx] = interval;
+        pendingIntervalUpdate[idx] = true;
       }
     }
   } else {
@@ -832,45 +877,12 @@ inline void updateTimerOCR(int idx) {
   SREG = sreg; // 割り込みレジスタを復元
 }
 
-// ===================== 台形加速事前計算関数 =====================
-// 起動時に1回だけ実行する台形加速配列の初期化（globalSpeedRpm、0.2秒立ち上げ）
+// ===================== 台形加速初期化 =====================
+// シンプルな台形加速用の初期化
+// 毎ステップ4steps/sずつ速度を増やす方式
 void initializeTrapezoidArrays() {
-  if (precomputedInitialized) return; // 既に初期化済みの場合はスキップ
-  
-  // globalSpeedRpm（デフォルト200rpm）への0.2秒立ち上げ用パラメータ
-  float peakSpeed = rpmToSps(globalSpeedRpm); // globalSpeedRpmをsteps/sに変換
-  float accel = (peakSpeed - minStartSpeedSps) / targetRampTimeSec; // 0.2秒で立ち上げ
-  
-  for (int idx = 0; idx < 3; idx++) {
-    // 各モータ用の配列を初期化
-    for (int i = 0; i < MAX_TRAPEZOID_STEPS; i++) {
-      precomputedIntervals[idx][i] = 0;
-    }
-    
-    unsigned int arrayIndex = 0;
-    float currentSpeed = minStartSpeedSps;
-    
-    // 0.2秒の立ち上げプロファイルを計算
-    for (int step = 0; step < MAX_TRAPEZOID_STEPS; step++) {
-      // 時間ベースの加速計算（0.2秒で最高速まで）
-      float timeRatio = (float)step / (float)MAX_TRAPEZOID_STEPS;
-      if (timeRatio > 1.0f) timeRatio = 1.0f;
-      
-      currentSpeed = minStartSpeedSps + (peakSpeed - minStartSpeedSps) * timeRatio;
-      
-      unsigned int interval = spsToIntervalUs(currentSpeed);
-      if (interval > 0) {
-        precomputedIntervals[idx][arrayIndex] = interval;
-        arrayIndex++;
-      }
-    }
-    
-    // 設定を保存
-    precomputedStepCount[idx] = arrayIndex;
-    precomputedIndex[idx] = 0;
-    usePrecomputed[idx] = (arrayIndex > 0);
-  }
-  
+  // 配列方式は使わず、毎ステップの速度計算で対応するためここでは何もしない
+  // 実際の加速は handleStep() 内で currentSpeedSps を更新することで実現
   precomputedInitialized = true;
 }
 
@@ -1308,9 +1320,9 @@ void processCommand(byte* cmd) {
           if (accelerationSps2[idx] < 1.0f) accelerationSps2[idx] = 1.0f;
         }
         
-        // 事前計算配列は使用せず、動的な事前計画のみを使用
-        // （事前計算配列と事前計画のステップ数不整合による二重加速を回避）
-        usePrecomputed[idx] = false;
+        // 事前計算配列を使用（確実に0.2秒で加速）
+        usePrecomputed[idx] = true;
+        precomputedIndex[idx] = 0;
         
         stepInterval[idx] = spsToIntervalUs(currentSpeedSps[idx]);
         switch(idx) {
@@ -1334,94 +1346,52 @@ void processCommand(byte* cmd) {
     lcdClear();
     lcdPrint("Start");
   } else if (action == 'S') {  // 停止
-    // 台形減速を考慮して、加速期間と同じ減速期間で停止
+    // 停止コマンド受信時：
+    // 1. 現在速度から最小速度(650steps/s)まで減速するのに必要なステップ数を計算
+    // 2. その減速ステップ数 + 次の400の倍数までのステップ数を計算
+    // 3. それまで定常速度で動かし、その後減速開始
+    
     noInterrupts();
     unsigned long currentSteps = totalSteps[idx];
     interrupts();
     
     // モーターが動作中の場合
     if (motorEnabled[idx]) {
-      unsigned long stepsToStop = 0;
-      unsigned long decelSteps = 0;
+      // 毎ステップ4steps/sずつ減速する場合、必要なステップ数を計算
+      // 650steps/s まで落とすのに必要なステップ数
+      // 現在速度 = 650 + 4*n (n=ステップ数)
+      // n = (現在速度 - 650) / 4
+      float currentSpeed = currentSpeedSps[idx];
+      if (currentSpeed < minStartSpeedSps) currentSpeed = minStartSpeedSps;
       
-      // 台形減速を行う場合、減速プロファイルを設定
-      if (useTrapezoid[idx]) {
-        // 現在速度から最小速度まで減速するのに必要なステップ数を計算
-        // decelSteps = (currentSpeed^2 - minSpeed^2) / (2 * acceleration)
-        float a = accelerationSps2[idx];
-        if (a < 1.0f) a = 1.0f;
-        float currentSpeed = currentSpeedSps[idx];
-        if (currentSpeed < minStartSpeedSps) currentSpeed = minStartSpeedSps;
-        
-        float decelStepsF = (currentSpeed * currentSpeed - minStartSpeedSps * minStartSpeedSps) / (2.0f * a);
-        decelSteps = (unsigned long)(decelStepsF + 0.5f);
-        if (decelSteps < 1) decelSteps = 1; // 最小1ステップ
-        
-        // 減速完了後の位置を計算
-        unsigned long decelEndSteps = currentSteps + decelSteps;
-        
-        // 次の400の倍数を計算（減速完了位置以降）
-        unsigned long nextMultiple = ((decelEndSteps / 400) + 1) * 400;
-        
-        // 停止位置までの総ステップ数（減速期間 + 等速期間）
-        stepsToStop = nextMultiple - currentSteps;
-        
-        // 等速期間を計算
-        unsigned long cruiseSteps = (stepsToStop > decelSteps) ? (stepsToStop - decelSteps) : 0;
-        
-        // 減速のための計画を設定
-        planActive[idx] = true;
-        planTotalSteps[idx] = stepsToStop;
-        planStepsDone[idx] = 0;
-        planAccelSteps[idx] = 0; // 加速なし
-        planCruiseSteps[idx] = cruiseSteps; // 等速期間（減速完了から400の倍数まで）
-        planDecelSteps[idx] = decelSteps; // 加速期間と同じステップ数で減速
-        planPeakSpeedSps[idx] = currentSpeedSps[idx]; // 現在速度から減速開始
-        
-        // 事前計算配列はリセット
-        resetPrecomputedArray(idx);
-      } else {
-        // 台形加減速がOFFの場合は、次の400の倍数で停止
-        unsigned long nextMultiple = ((currentSteps / 400) + 1) * 400;
-        stepsToStop = nextMultiple - currentSteps;
-        
-        // 計画をクリア（等速で停止位置まで移動）
-        planActive[idx] = false;
-        planStepsDone[idx] = 0;
-        resetPrecomputedArray(idx);
-      }
+      // 減速ステップ数を計算
+      float decelStepsF = (currentSpeed - minStartSpeedSps) / 4.0f;
+      unsigned long decelSteps = (unsigned long)(decelStepsF + 0.5f);
+      if (decelSteps < 1) decelSteps = 1;
       
-      // 残ステップ数を設定
-      remainingSteps[idx] = stepsToStop;
+      // 減速完了後の位置
+      unsigned long decelEndSteps = currentSteps + decelSteps;
       
-      // 停止処理はhandleStep()内で自動的に行われる
+      // 次の400の倍数を計算（減速完了位置以降）
+      unsigned long nextMultiple = ((decelEndSteps / 400) + 1) * 400;
+      
+      // 減速開始位置 = 次の400の倍数 - 減速ステップ数
+      unsigned long decelStartPos = (nextMultiple > decelSteps) ? (nextMultiple - decelSteps) : 0;
+      
+      // 停止要求と減速パラメータを設定
+      stopRequested[idx] = true;
+      decelStepsRequired[idx] = decelSteps;
+      decelStartStep[idx] = decelStartPos;
+      isDecelerating[idx] = false;
+      
+      // LCD表示
+      lcdClear();
+      lcdPrint("Stop");
     } else {
-      // モーターが停止中の場合は何もしない
-      // 励磁常時ONフラグがOFFの場合のみ励磁をOFFにする
-      if (!excitationAlwaysOn[idx]) {
-        digitalWrite(enaPins[idx], HIGH);  // 励磁OFF
-      }
-      
-      remainingSteps[idx] = 0;
-      currentSpeedSps[idx] = 0.0f;
-      planActive[idx] = false;
-      planStepsDone[idx] = 0;
-      resetPrecomputedArray(idx);
-      updatePumpState(idx);
-      
-      // 停止時にEEPROMに累積ステップ数を保存
-      saveStepsToEEPROM(idx);
-      
-      // バルブ常時OpenフラグがONの場合、バルブを閉じない
-      if (!valveNormallyOpen[idx]) {
-        // 非同期Valve遅延管理を開始（モーター停止 → 0.5秒後 → Valve閉鎖）
-        startValveDelay(idx, VALVE_DELAY_CLOSE_AFTER, false, false, 0);
-      }
+      // モーターが動作していない場合
+      lcdClear();
+      lcdPrint("Already Stopped");
     }
-    
-    // LCD表示
-    lcdClear();
-    lcdPrint("Receive Stop");
   } else if (action == 'F') {  // 正転
     digitalWrite(dirPins[idx], LOW);
     // LCD表示
@@ -1670,6 +1640,10 @@ void processCommand(byte* cmd) {
       
       // グローバル速度を更新
       globalSpeedRpm = newSpeed;
+      
+      // グローバル速度が変更されたため、加速配列を再初期化
+      precomputedInitialized = false;
+      initializeTrapezoidArrays();
       
       // 全モータの目標速度を更新
       for (int i = 0; i < 3; i++) {
