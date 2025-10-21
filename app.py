@@ -406,7 +406,12 @@ def initialize_camera():
             for device_id in camera_devices:
                 try:
                     print(f"カメラデバイス {device_id} を試行中...")
-                    camera_local = cv2.VideoCapture(device_id)
+                    
+                    # Windowsの場合はDirectShowバックエンドを明示的に指定（高速化）
+                    if IS_WINDOWS:
+                        camera_local = cv2.VideoCapture(device_id, cv2.CAP_DSHOW)
+                    else:
+                        camera_local = cv2.VideoCapture(device_id)
 
                     if camera_local.isOpened():
                         # カメラ設定
