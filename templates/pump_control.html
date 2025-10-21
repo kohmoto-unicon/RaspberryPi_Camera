@@ -557,6 +557,16 @@
           <span class="status-indicator" id="serialStatus2"></span>
           <span id="statusText2">USB1（ポンプ4-6）: 確認中...</span>
         </p>
+        <div class="control-group" style="margin-top: 15px;">
+          <label>漏液チェック（回転数取得）:</label>
+          <div class="input-group">
+            <label class="switch">
+              <input type="checkbox" id="leakCheckSwitch" onchange="toggleLeakCheck(this.checked)" checked>
+              <span class="slider"></span>
+            </label>
+            <span class="direction-label" id="leakCheckLabel">ON</span>
+          </div>
+        </div>
       </div>
 
       <div class="pump-grid">
@@ -1123,6 +1133,10 @@
     let isAutoSending = false;
     let autoSendingTimeout = null;
     
+    // 漏液チェック（回転数取得）のON/OFF管理
+    let leakCheckEnabled = true;
+    let autoRpmInterval = null;
+    
     // 自動送信状態の表示を更新
     function updateAutoSendingStatus() {
       const statusElement = document.getElementById('autoSendingStatus');
@@ -1135,6 +1149,37 @@
           statusElement.style.color = 'green';
         }
       }
+    }
+    
+    // 漏液チェックのON/OFF切り替え
+    function toggleLeakCheck(isEnabled) {
+      leakCheckEnabled = isEnabled;
+      const label = document.getElementById('leakCheckLabel');
+      
+      if (label) {
+        label.textContent = isEnabled ? 'ON' : 'OFF';
+      }
+      
+      if (isEnabled) {
+        console.log('漏液チェックを有効化します');
+        // インターバルを再開
+        if (autoRpmInterval === null) {
+          autoRpmInterval = setInterval(autoGetRpm, 5000);
+          console.log('自動回転速度取得を再開しました (5秒間隔)');
+        }
+      } else {
+        console.log('漏液チェックを無効化します');
+        // インターバルを停止
+        if (autoRpmInterval !== null) {
+          clearInterval(autoRpmInterval);
+          autoRpmInterval = null;
+          console.log('自動回転速度取得を停止しました');
+        }
+      }
+      
+      // 状態をローカルストレージに保存
+      localStorage.setItem('leak_check_enabled', isEnabled.toString());
+      console.log(`漏液チェック状態を保存: ${isEnabled}`);
     }
     
     // 自動送信状態を手動でリセット（デバッグ用）
@@ -1151,6 +1196,12 @@
     
     // 回転速度取得を自動実行（漏液検出のため）
     async function autoGetRpm() {
+      // 漏液チェックが無効の場合はスキップ
+      if (!leakCheckEnabled) {
+        console.log('漏液チェックが無効のため、自動回転速度取得をスキップします');
+        return;
+      }
+      
       if (isAutoSending) {
         console.log('自動送信中のため、スキップします');
         return;
@@ -1839,6 +1890,25 @@
       isAutoSending = false;
       updateAutoSendingStatus();
       
+      // 漏液チェック状態を復元（デフォルトはON）
+      const savedLeakCheckState = localStorage.getItem('leak_check_enabled');
+      if (savedLeakCheckState !== null) {
+        leakCheckEnabled = savedLeakCheckState === 'true';
+      } else {
+        leakCheckEnabled = true; // 初期値はON
+      }
+      
+      // スイッチの状態を復元
+      const leakCheckSwitch = document.getElementById('leakCheckSwitch');
+      if (leakCheckSwitch) {
+        leakCheckSwitch.checked = leakCheckEnabled;
+        const leakCheckLabel = document.getElementById('leakCheckLabel');
+        if (leakCheckLabel) {
+          leakCheckLabel.textContent = leakCheckEnabled ? 'ON' : 'OFF';
+        }
+        console.log(`漏液チェック状態を復元: ${leakCheckEnabled ? 'ON' : 'OFF'}`);
+      }
+      
       checkStatus();
       checkLeakStatus();
       
@@ -1849,14 +1919,17 @@
       setInterval(checkLeakStatus, 1000);
       
       // 5秒ごとに自動回転速度取得（漏液検出のため）
-      const autoRpmInterval = setInterval(autoGetRpm, 5000);
-      
-      console.log('漏液検出監視が開始されました');
-      console.log('自動回転速度取得（5秒間隔）が開始されました');
-      console.log('setInterval ID:', autoRpmInterval);
-      
-      // 初回実行（即座に1回実行）
-      setTimeout(autoGetRpm, 1000);
+      // 漏液チェックがONの場合のみインターバルを開始
+      if (leakCheckEnabled) {
+        autoRpmInterval = setInterval(autoGetRpm, 5000);
+        console.log('漏液検出監視が開始されました');
+        console.log('自動回転速度取得（5秒間隔）が開始されました');
+        
+        // 初回実行（即座に1回実行）
+        setTimeout(autoGetRpm, 1000);
+      } else {
+        console.log('漏液チェックがOFFのため、自動回転速度取得は開始されません');
+      }
     });
   </script>
 </body>
