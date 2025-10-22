@@ -247,6 +247,25 @@ void processValveDelays() {
           digitalWrite(enaPins[i], LOW); // 励磁ON
           remainingSteps[i] = valveDelayManagers[i].remainingSteps;
           motorEnabled[i] = true;
+            // 動作開始時に減速開始タイミングを計算（固定回転用）
+            if (planActive[i]) {
+              decelStartStep[i] = currentRunSteps[i] + planAccelSteps[i] + planCruiseSteps[i];
+            }
+            // 起動時に目標速度・初速・加速度を再計算（停止後の低速化防止）
+            if (useTrapezoid[i]) {
+              // 目標速度は globalSpeedRpm を基準に再設定
+              targetSpeedSps[i] = rpmToSps(globalSpeedRpm);
+              if (targetSpeedSps[i] <= minStartSpeedSps) {
+                currentSpeedSps[i] = targetSpeedSps[i];
+              } else {
+                currentSpeedSps[i] = minStartSpeedSps;
+              }
+              if (targetSpeedSps[i] > currentSpeedSps[i]) {
+                float dv = targetSpeedSps[i] - currentSpeedSps[i];
+                accelerationSps2[i] = dv / targetRampTimeSec;
+                if (accelerationSps2[i] < 1.0f) accelerationSps2[i] = 1.0f;
+              }
+            }
           updatePumpState(i);
           
           // 台形加減速設定
@@ -849,20 +868,45 @@ inline void handleStep(int idx) {
           }
         }
       } else {
-        // 【新仕様】通常の加速処理（停止要求がない場合）
-        // 1ステップごとに4rpm加速、目標速度に到達したら定速運転
-        
-        // 目標速度が650steps/s（minStartSpeedSps）以下の場合は加速不要
-        if (targetSpeed <= minStartSpeedSps) {
-          // 最初から定速（目標速度で動作）
-          currentSpeedSps[idx] = targetSpeed;
+        // 固定回転の事前計画がある場合は planActive に従う
+        if (planActive[idx]) {
+          unsigned long s = planStepsDone[idx];
+          unsigned long accelEnd = planAccelSteps[idx];
+          unsigned long cruiseEnd = planAccelSteps[idx] + planCruiseSteps[idx];
+
+          // 加速フェーズ
+          if (s < accelEnd) {
+            // 1ステップごとに4 steps/s加速
+            if (currentSpeedSps[idx] < planPeakSpeedSps[idx]) {
+              currentSpeedSps[idx] += 4.0f;
+              if (currentSpeedSps[idx] > planPeakSpeedSps[idx]) currentSpeedSps[idx] = planPeakSpeedSps[idx];
+            }
+          }
+          // 等速フェーズ
+          else if (s < cruiseEnd) {
+            currentSpeedSps[idx] = planPeakSpeedSps[idx];
+          }
+          // 減速フェーズ
+          else {
+            if (currentSpeedSps[idx] > minStartSpeedSps) {
+              currentSpeedSps[idx] -= 4.0f; // 1ステップごとに4 steps/s減速
+              if (currentSpeedSps[idx] < minStartSpeedSps) currentSpeedSps[idx] = minStartSpeedSps;
+            }
+          }
         } else {
-          // 650steps/sから開始して、1ステップごとに4 steps/sずつ加速
-          if (currentSpeedSps[idx] < targetSpeed) {
-            currentSpeedSps[idx] += 4.0f; // 増分は steps/s
-            if (currentSpeedSps[idx] > targetSpeed) currentSpeedSps[idx] = targetSpeed;
-          } else {
+          // 【新仕様】通常の加速処理（停止要求がない場合）
+          // 目標速度が650steps/s（minStartSpeedSps）以下の場合は加速不要
+          if (targetSpeed <= minStartSpeedSps) {
+            // 最初から定速（目標速度で動作）
             currentSpeedSps[idx] = targetSpeed;
+          } else {
+            // 650steps/sから開始して、1ステップごとに4 steps/sずつ加速
+            if (currentSpeedSps[idx] < targetSpeed) {
+              currentSpeedSps[idx] += 4.0f; // 増分は steps/s
+              if (currentSpeedSps[idx] > targetSpeed) currentSpeedSps[idx] = targetSpeed;
+            } else {
+              currentSpeedSps[idx] = targetSpeed;
+            }
           }
         }
       }
@@ -1395,28 +1439,27 @@ void processCommand(byte* cmd) {
       digitalWrite(enaPins[idx], LOW); // 励磁ON
       remainingSteps[idx] = (value > 0) ? value * 2 : 0; // 受信したステップ数の2倍で動作
       motorEnabled[idx] = true;
+      // 動作開始時に減速開始タイミングを計算（固定回転用）
+      if (planActive[idx]) {
+        decelStartStep[idx] = currentRunSteps[idx] + planAccelSteps[idx] + planCruiseSteps[idx];
+      }
       updatePumpState(idx);
       
       // 台形加減速設定
       if (useTrapezoid[idx]) {
-        // 加減速計算カウンターをリセット
+        // 起動時に必ず目標速度・初速・加速度を再計算して上書き（停止後再開時の低速化対策）
         trapezoidCalcCounter[idx] = 0;
-        
-        // 【新仕様】初期速度設定
-        // 目標速度が設定されていない場合はglobalSpeedRpmを使用
-        if (targetSpeedSps[idx] < 1.0f) {
-          targetSpeedSps[idx] = rpmToSps(globalSpeedRpm);
-        }
-        
-        // 目標速度が650steps/s（minStartSpeedSps）以下の場合は加速不要、最初から目標速度で開始
+        // 目標速度はグローバル速度を基準に再計算（ローカルVコマンドの上書きを避けたい場合は別途フラグ化可能）
+        targetSpeedSps[idx] = rpmToSps(globalSpeedRpm);
+
+        // 開始速度の決定
         if (targetSpeedSps[idx] <= minStartSpeedSps) {
           currentSpeedSps[idx] = targetSpeedSps[idx];
         } else {
-          // 目標速度が650steps/sより高い場合は、650steps/s（minStartSpeedSps）から開始
-          currentSpeedSps[idx] = minStartSpeedSps; // 650steps/s
+          currentSpeedSps[idx] = minStartSpeedSps; // 650 steps/s
         }
-        
-        // 加速度の計算（目標速度への到達時間を考慮）- 互換性のため残す
+
+        // 加速度の再計算（0.2秒で到達する設計）
         if (targetSpeedSps[idx] > currentSpeedSps[idx]) {
           float dv = targetSpeedSps[idx] - currentSpeedSps[idx];
           accelerationSps2[idx] = dv / targetRampTimeSec;
