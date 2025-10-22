@@ -254,28 +254,29 @@ void processValveDelays() {
             // 加減速計算カウンターをリセット
             trapezoidCalcCounter[i] = 0;
             
-            // 初回動作時の整合性を確保：現在速度を最小開始速度に設定
-            currentSpeedSps[i] = minStartSpeedSps;
-            
+            // 【新仕様】初期速度設定
             // 目標速度が設定されていない場合はglobalSpeedRpmを使用
             if (targetSpeedSps[i] < 1.0f) {
               targetSpeedSps[i] = rpmToSps(globalSpeedRpm);
             }
             
-            // 目標速度が最小開始速度より小さい場合は調整
-            if (targetSpeedSps[i] > 0.0f && targetSpeedSps[i] < currentSpeedSps[i]) {
+            // 目標速度が650steps/s（minStartSpeedSps）以下の場合は加速不要、最初から目標速度で開始
+            if (targetSpeedSps[i] <= minStartSpeedSps) {
               currentSpeedSps[i] = targetSpeedSps[i];
+            } else {
+              // 目標速度が650steps/sより高い場合は、650steps/s（minStartSpeedSps）から開始
+              currentSpeedSps[i] = minStartSpeedSps; // 650steps/s
             }
             
-            // 加速度の計算（目標速度への到達時間を考慮）
+            // 加速度の計算（目標速度への到達時間を考慮）- 互換性のため残す
             if (targetSpeedSps[i] > currentSpeedSps[i]) {
               float dv = targetSpeedSps[i] - currentSpeedSps[i];
               accelerationSps2[i] = dv / targetRampTimeSec;
               if (accelerationSps2[i] < 1.0f) accelerationSps2[i] = 1.0f;
             }
             
-            // 事前計算配列を使用（確実に0.2秒で加速）
-            usePrecomputed[i] = true;
+            // 事前計算配列は使用しない（新仕様では1ステップ4rpm加速を使用）
+            usePrecomputed[i] = false;
             precomputedIndex[i] = 0;
             
             stepInterval[i] = spsToIntervalUs(currentSpeedSps[i]);
@@ -799,7 +800,8 @@ inline void handleStep(int idx) {
 
     // --- 【新仕様】台形加速・減速処理（HIGH時のみ実行） ---
     if (useTrapezoid[idx] && motorEnabled[idx]) {
-      float targetSpeed = rpmToSps(globalSpeedRpm);
+      // 目標速度を取得（Vコマンドで設定された個別速度、または未設定ならglobalSpeedRpm）
+      float targetSpeed = (targetSpeedSps[idx] > 0.0f) ? targetSpeedSps[idx] : rpmToSps(globalSpeedRpm);
       
       // 停止要求がある場合の処理
       if (stopRequested[idx]) {
@@ -817,25 +819,28 @@ inline void handleStep(int idx) {
           }
         }
         
-        // 減速中の場合：1ステップごとに4rpm減速
+        // 減速中の場合：1ステップごとに4 steps/s（steps per second）減速
         if (isDecelerating[idx]) {
-          // 現在速度をrpmに変換
-          float currentRpm = (currentSpeedSps[idx] * 60.0f) / (float)stepsPerRev;
-          
-          // 4rpm減速
-          currentRpm -= 4.0f;
-          if (currentRpm < 650.0f) {
-            currentRpm = 650.0f; // 最小速度650rpmで維持
+          // 現在速度をsteps/sベースで減少させる
+          currentSpeedSps[idx] -= 4.0f; // 4 steps/s per step
+          if (currentSpeedSps[idx] < minStartSpeedSps) {
+            currentSpeedSps[idx] = minStartSpeedSps; // 最小速度650 steps/sで維持
           }
-          
-          // rpmをsteps/sに戻す
-          currentSpeedSps[idx] = (currentRpm * (float)stepsPerRev) / 60.0f;
         }
       } else {
-        // 通常の加速処理（停止要求がない場合）
-        if (currentSpeedSps[idx] < targetSpeed) {
-          currentSpeedSps[idx] += 4.0f; // 毎ステップ4steps/s増加
-          if (currentSpeedSps[idx] > targetSpeed) {
+        // 【新仕様】通常の加速処理（停止要求がない場合）
+        // 1ステップごとに4rpm加速、目標速度に到達したら定速運転
+        
+        // 目標速度が650steps/s（minStartSpeedSps）以下の場合は加速不要
+        if (targetSpeed <= minStartSpeedSps) {
+          // 最初から定速（目標速度で動作）
+          currentSpeedSps[idx] = targetSpeed;
+        } else {
+          // 650steps/sから開始して、1ステップごとに4 steps/sずつ加速
+          if (currentSpeedSps[idx] < targetSpeed) {
+            currentSpeedSps[idx] += 4.0f; // 増分は steps/s
+            if (currentSpeedSps[idx] > targetSpeed) currentSpeedSps[idx] = targetSpeed;
+          } else {
             currentSpeedSps[idx] = targetSpeed;
           }
         }
@@ -1376,28 +1381,29 @@ void processCommand(byte* cmd) {
         // 加減速計算カウンターをリセット
         trapezoidCalcCounter[idx] = 0;
         
-        // 初回動作時の整合性を確保：現在速度を最小開始速度に設定
-        currentSpeedSps[idx] = minStartSpeedSps;
-        
+        // 【新仕様】初期速度設定
         // 目標速度が設定されていない場合はglobalSpeedRpmを使用
         if (targetSpeedSps[idx] < 1.0f) {
           targetSpeedSps[idx] = rpmToSps(globalSpeedRpm);
         }
         
-        // 目標速度が最小開始速度より小さい場合は調整
-        if (targetSpeedSps[idx] > 0.0f && targetSpeedSps[idx] < currentSpeedSps[idx]) {
+        // 目標速度が650steps/s（minStartSpeedSps）以下の場合は加速不要、最初から目標速度で開始
+        if (targetSpeedSps[idx] <= minStartSpeedSps) {
           currentSpeedSps[idx] = targetSpeedSps[idx];
+        } else {
+          // 目標速度が650steps/sより高い場合は、650steps/s（minStartSpeedSps）から開始
+          currentSpeedSps[idx] = minStartSpeedSps; // 650steps/s
         }
         
-        // 加速度の計算（目標速度への到達時間を考慮）
+        // 加速度の計算（目標速度への到達時間を考慮）- 互換性のため残す
         if (targetSpeedSps[idx] > currentSpeedSps[idx]) {
           float dv = targetSpeedSps[idx] - currentSpeedSps[idx];
           accelerationSps2[idx] = dv / targetRampTimeSec;
           if (accelerationSps2[idx] < 1.0f) accelerationSps2[idx] = 1.0f;
         }
         
-        // 事前計算配列を使用（確実に0.2秒で加速）
-        usePrecomputed[idx] = true;
+        // 事前計算配列は使用しない（新仕様では1ステップ4rpm加速を使用）
+        usePrecomputed[idx] = false;
         precomputedIndex[idx] = 0;
         
         stepInterval[idx] = spsToIntervalUs(currentSpeedSps[idx]);
@@ -1418,9 +1424,35 @@ void processCommand(byte* cmd) {
       startValveDelay(idx, VALVE_DELAY_OPEN_BEFORE, true, true, (value > 0) ? value * 2 : 0);
     }
     
-    // LCD表示
+    // LCD表示（開始速度と目標速度を表示）
     lcdClear();
-    lcdPrint("Start");
+    if (useTrapezoid[idx]) {
+      // 台形加速モードの場合：開始速度と目標速度を表示
+      // 目標速度を取得
+      float targetSps = (targetSpeedSps[idx] > 0.0f) ? targetSpeedSps[idx] : rpmToSps(globalSpeedRpm);
+      
+      // 開始速度を計算（Mコマンド処理と同じロジック）
+      float startSps;
+      if (targetSps <= minStartSpeedSps) {
+        startSps = targetSps;  // 目標速度が650steps/s以下なら目標速度で開始
+      } else {
+        startSps = minStartSpeedSps;  // 650steps/sから開始
+      }
+      
+      int startRpm = (int)((startSps * 60.0f) / (float)stepsPerRev + 0.5f);
+      int targetRpm = (int)((targetSps * 60.0f) / (float)stepsPerRev + 0.5f);
+      
+      char line1[17];
+      sprintf(line1, "M%d Start", idx + 1);
+      lcdPrint(line1);
+      lcdSetCursor(0, 1);
+      char line2[17];
+      sprintf(line2, "S:%d T:%d", startRpm, targetRpm);
+      lcdPrint(line2);
+    } else {
+      // 通常モードの場合
+      lcdPrint("Start");
+    }
   } else if (action == 'S') {  // 停止
     // 【新仕様】停止コマンド受信時の減速処理
     // 1. stepCounter(1-400)と現在速度(rpm)を読み取る
@@ -1436,16 +1468,16 @@ void processCommand(byte* cmd) {
       float currentSpeedSps_local = currentSpeedSps[idx]; // 現在速度 steps/s
       interrupts();
       
-      // 現在速度をrpmに変換（steps/s → rpm）
-      // rpm = (steps/s * 60) / stepsPerRev
-      long currentSpeedRpm = (long)((currentSpeedSps_local * 60.0f) / (float)stepsPerRev + 0.5f);
+  // 現在速度は steps/s ベースで取得済み（currentSpeedSps_local）
+  // 必要に応じてrpm換算も取得するが、減速計算は steps/s ベースで行う
+  long currentSpeedRpm = (long)((currentSpeedSps_local * 60.0f) / (float)stepsPerRev + 0.5f);
       
       // "停止までのステップ数" = 800 - stepCounter
       long stepsToStopVal = 800 - currentStepCount;
       if (stepsToStopVal < 0) stepsToStopVal = 0; // 安全対策
       
-      // 【減速不要処理】現在速度が650rpm以下または非常に近い場合
-      if (currentSpeedRpm <= 655) {  // 650rpm + 安全マージン5rpm
+  // 【減速不要処理】現在速度が650 steps/s 以下または非常に近い場合
+  if (currentSpeedSps_local <= (minStartSpeedSps + 5.0f)) {  // 650 steps/s + 安全マージン
         // 減速不要：現在速度のまま停止位置まで進んで停止
         stopRequested[idx] = true;
         decelStepsRequired[idx] = 0; // 減速ステップ数は0
@@ -1463,10 +1495,11 @@ void processCommand(byte* cmd) {
         targetSpeedSps[idx] = currentSpeedSps_local;
         isDecelerating[idx] = false; // 減速しない
       } else {
-        // 【通常の減速処理】現在速度が650rpmより高い場合
-        // "減速に必要なステップ数" = (現在速度rpm - 650) / 4 + 1 (整数演算)
-        long decelSteps = ((currentSpeedRpm - 650) / 4) + 1;
-        if (decelSteps < 1) decelSteps = 1;
+  // 【通常の減速処理】現在速度が650 steps/sより高い場合
+  // "減速に必要なステップ数" = ceil((現在速度_steps/s - 650_steps/s) / 4_steps/s_per_step)
+  float diff = currentSpeedSps_local - minStartSpeedSps;
+  long decelSteps = (long)ceilf(diff / 4.0f);
+  if (decelSteps < 1) decelSteps = 1;
         
         // 停止要求フラグと減速パラメータを設定
         stopRequested[idx] = true;
