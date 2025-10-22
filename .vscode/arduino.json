@@ -1,3 +1,6 @@
 {
-    "port": "/dev/ttyACM0"
+    "port": "COM18",
+    "configuration": "cpu=atmega2560",
+    "board": "arduino:avr:mega",
+    "programmer": "usbasp"
 }

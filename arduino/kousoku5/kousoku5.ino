@@ -63,6 +63,7 @@ volatile long globalSpeedRpm = 200; // 全モータ共通の目標速度（デ�
 
 // ==== モーター停止処理用フラグ ====
 volatile bool motorStopPending[3] = {false, false, false}; // 停止処理待ちフラグ
+volatile bool fixedStepCompleted[3] = {false, false, false}; // 固定ステップ完了フラグ（remainingSteps 1→0遷移検出）
 
 // ==== 台形加減速計算カウンター ====
 volatile uint8_t trapezoidCalcCounter[3] = {0, 0, 0}; // 加減速計算の間引きカウンター（4回に1回実行）
@@ -762,10 +763,13 @@ inline void handleStep(int idx) {
     *stepPorts[idx] |= stepMasks[idx]; // HIGH
     if (remainingSteps[idx] > 0) {
       remainingSteps[idx]--;
-      if (planActive[idx]) { planStepsDone[idx]++; }
       
-      // 累積ステップ数を更新（割り込み内で直接処理）
-      totalSteps[idx]++;
+      // remainingStepsが1→0になった瞬間（固定ステップ完了）を検出
+      if (remainingSteps[idx] == 0) {
+        // 次のLOWエッジで停止するためのフラグを設定
+        // （無限動作の場合は最初からremainingSteps==0なのでここは通らない）
+        fixedStepCompleted[idx] = true;
+      }
       
       // 固定回転時：残りステップがわずかになったら減速開始をトリガー
       if (useTrapezoid[idx] && remainingSteps[idx] > 0 && !stopRequested[idx] && !isDecelerating[idx]) {
@@ -782,15 +786,8 @@ inline void handleStep(int idx) {
         }
       }
       
-      if (remainingSteps[idx] == 0) {
-        // モーター停止フラグを立てる（重い処理はloop()で実行）
-        motorEnabled[idx] = false;
-        planActive[idx] = false;
-        motorStopPending[idx] = true; // loop()で停止処理を実行
-      }
-    } else {
-      // 無限動作の場合も累積ステップ数を更新（割り込み内で直接処理）
-      totalSteps[idx]++;
+      // 残りステップが0になっても、次のLOWエッジまでは動作を継続
+      // （motorEnabledはLOWエッジで停止させる）
     }
 
     // --- シンプルな台形加速・減速処理（HIGH時のみ実行） ---
@@ -814,14 +811,8 @@ inline void handleStep(int idx) {
             currentSpeedSps[idx] = minStartSpeedSps;
           }
         }
-        
-        // 目標速度に達したら停止
-        if (currentSpeedSps[idx] <= minStartSpeedSps) {
-          motorEnabled[idx] = false;
-          motorStopPending[idx] = true;
-          stopRequested[idx] = false;
-          isDecelerating[idx] = false;
-        }
+        // 最小速度に達した後も、remainingStepsが0になるまで最小速度で動作継続
+        // （停止判定はLOWエッジでremainingSteps==0のチェックで行う）
       } else {
         // 加速中：現在の速度が目標に達するまで加速
         if (currentSpeedSps[idx] < targetSpeed) {
@@ -842,6 +833,46 @@ inline void handleStep(int idx) {
     }
   } else {
     *stepPorts[idx] &= ~stepMasks[idx]; // LOW
+    
+    // LOWエッジで累積ステップ数とプラン進捗を更新（1ステップ完了）
+    totalSteps[idx]++;
+    if (planActive[idx]) { 
+      planStepsDone[idx]++; 
+    }
+    
+    // LOWエッジで停止判定を行う（最後のパルスを確実に完了させる）
+    if (motorEnabled[idx]) {
+      // 停止条件の判定
+      bool shouldStop = false;
+      
+      // 条件1: 固定ステップ数動作の完了（fixedStepCompletedフラグで判定）
+      //       remainingStepsが1→0に遷移した時にHIGHエッジでフラグが立つ
+      if (fixedStepCompleted[idx]) {
+        shouldStop = true;
+        fixedStepCompleted[idx] = false; // フラグをクリア
+      }
+      // 条件2: Sコマンド停止要求があり、減速が完了し、
+      //       目標位置（400の倍数）に到達した
+      else if (stopRequested[idx] && isDecelerating[idx]) {
+        // 目標位置に到達したかチェック（400の倍数）
+        if (totalSteps[idx] > 0 && (totalSteps[idx] % 400) == 0) {
+          // かつ、最小速度まで減速完了している
+          if (currentSpeedSps[idx] <= minStartSpeedSps) {
+            shouldStop = true;
+          }
+        }
+      }
+      
+      if (shouldStop) {
+        // モーター停止
+        motorEnabled[idx] = false;
+        planActive[idx] = false;
+        motorStopPending[idx] = true; // loop()で後処理を実行
+        // 減速フラグもリセット
+        stopRequested[idx] = false;
+        isDecelerating[idx] = false;
+      }
+    }
     
     // 事前に要求されたインターバル更新を反映（LOW時のみ実行・他モータとの干渉を防止・アトミック化）
     if (pendingIntervalUpdate[idx]) {
@@ -1233,6 +1264,12 @@ void processCommand(byte* cmd) {
       lcdPrint("Already Running");
       return;
     }
+    
+    // 前回の動作からのフラグと累積ステップ数をリセット
+    stopRequested[idx] = false;
+    isDecelerating[idx] = false;
+    fixedStepCompleted[idx] = false;  // 固定ステップ完了フラグもリセット
+    totalSteps[idx] = 0;  // 新しい動作のために累積ステップをリセット
     
     // 台形加減速の事前計画を設定（遅延処理とモーター即座開始の両方で使用）
     if (useTrapezoid[idx]) {
