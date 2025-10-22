@@ -102,6 +102,7 @@ volatile bool stopRequested[3] = {false, false, false}; // 停止要求フラグ
 volatile unsigned long decelStepsRequired[3] = {0, 0, 0}; // 減速に必要なステップ数
 volatile unsigned long decelStartStep[3] = {0, 0, 0}; // 減速開始ステップ位置
 volatile bool isDecelerating[3] = {false, false, false}; // 減速中フラグ
+volatile unsigned long currentRunSteps[3] = {0, 0, 0}; // 現在の動作での一時的なステップカウンター（Sコマンド用）
 
 // ==== 台形加速事前計算配列 ====
 #define MAX_TRAPEZOID_STEPS 600   // 最大ステップ数（200rpm、0.2秒立ち上げ用）
@@ -794,9 +795,9 @@ inline void handleStep(int idx) {
     if (useTrapezoid[idx] && motorEnabled[idx]) {
       float targetSpeed = rpmToSps(globalSpeedRpm);
       
-      // 停止要求がある場合、減速開始位置をチェック
+      // 停止要求がある場合、減速開始位置をチェック（currentRunStepsを使用）
       if (stopRequested[idx] && !isDecelerating[idx]) {
-        if (totalSteps[idx] >= decelStartStep[idx]) {
+        if (currentRunSteps[idx] >= decelStartStep[idx]) {
           // 減速開始
           isDecelerating[idx] = true;
         }
@@ -835,7 +836,8 @@ inline void handleStep(int idx) {
     *stepPorts[idx] &= ~stepMasks[idx]; // LOW
     
     // LOWエッジで累積ステップ数とプラン進捗を更新（1ステップ完了）
-    totalSteps[idx]++;
+    totalSteps[idx]++;  // 永続的な累積ステップ数（回転数表示用）
+    currentRunSteps[idx]++;  // 現在の動作での一時カウンター（Sコマンド用）
     if (planActive[idx]) { 
       planStepsDone[idx]++; 
     }
@@ -851,13 +853,24 @@ inline void handleStep(int idx) {
         shouldStop = true;
         fixedStepCompleted[idx] = false; // フラグをクリア
       }
-      // 条件2: Sコマンド停止要求があり、減速が完了し、
-      //       目標位置（400の倍数）に到達した
-      else if (stopRequested[idx] && isDecelerating[idx]) {
-        // 目標位置に到達したかチェック（400の倍数）
-        if (totalSteps[idx] > 0 && (totalSteps[idx] % 400) == 0) {
-          // かつ、最小速度まで減速完了している
-          if (currentSpeedSps[idx] <= minStartSpeedSps) {
+      // 条件2: Sコマンド停止要求がある
+      else if (stopRequested[idx]) {
+        // 台形加速ON：減速完了後に400の倍数で停止
+        if (useTrapezoid[idx]) {
+          if (isDecelerating[idx]) {
+            // 最小速度まで減速完了している場合
+            if (currentSpeedSps[idx] <= minStartSpeedSps) {
+              // 400の倍数に到達したら停止
+              if (currentRunSteps[idx] > 0 && (currentRunSteps[idx] % 400) == 0) {
+                shouldStop = true;
+              }
+            }
+          }
+        }
+        // 台形加速OFF：即座に400の倍数で停止
+        else {
+          // 400の倍数に到達したら即座に停止
+          if (currentRunSteps[idx] > 0 && (currentRunSteps[idx] % 400) == 0) {
             shouldStop = true;
           }
         }
@@ -1265,11 +1278,12 @@ void processCommand(byte* cmd) {
       return;
     }
     
-    // 前回の動作からのフラグと累積ステップ数をリセット
+    // 前回の動作からのフラグをリセット
     stopRequested[idx] = false;
     isDecelerating[idx] = false;
     fixedStepCompleted[idx] = false;  // 固定ステップ完了フラグもリセット
-    totalSteps[idx] = 0;  // 新しい動作のために累積ステップをリセット
+    currentRunSteps[idx] = 0;  // 現在の動作での一時カウンターをリセット
+    // 注意：totalStepsは累積ステップ数なのでリセットしない（EEPROMに保存される永続値）
     
     // 台形加減速の事前計画を設定（遅延処理とモーター即座開始の両方で使用）
     if (useTrapezoid[idx]) {
@@ -1389,7 +1403,7 @@ void processCommand(byte* cmd) {
     // 3. それまで定常速度で動かし、その後減速開始
     
     noInterrupts();
-    unsigned long currentSteps = totalSteps[idx];
+    unsigned long currentSteps = currentRunSteps[idx];  // 現在の動作での一時カウンターを使用
     interrupts();
     
     // モーターが動作中の場合
