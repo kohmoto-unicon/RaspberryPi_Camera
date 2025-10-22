@@ -310,7 +310,28 @@ void processValveDelays() {
           }
         }
         valveDelayManagers[i].valveActionPending = false;
-        valveDelayManagers[i].motorActionPending = false; // 停止時はモーター操作なし
+
+        // Valve操作後にモーターの遅延アクションが登録されている場合は実行する
+        if (valveDelayManagers[i].motorActionPending) {
+          if (valveDelayManagers[i].motorEnable) {
+            // モーターを開始する（通常はOPEN_BEFOREで使うが互換性のため）
+            digitalWrite(enaPins[i], LOW); // 励磁ON
+            remainingSteps[i] = valveDelayManagers[i].remainingSteps;
+            motorEnabled[i] = true;
+            updatePumpState(i);
+          } else {
+            // モーターを停止（励磁OFF）する。ただし励磁常時ONフラグがONの場合はOFFしない
+            if (!excitationAlwaysOn[i]) {
+              digitalWrite(enaPins[i], HIGH); // 励磁OFF（遅延実行）
+            }
+            // 明示的に motorEnabled を false にして状態を整える
+            motorEnabled[i] = false;
+            remainingSteps[i] = 0;
+            updatePumpState(i);
+          }
+          valveDelayManagers[i].motorActionPending = false;
+        }
+
         // 遅延処理完了
         stopValveDelay(i);
       }
@@ -2044,20 +2065,18 @@ void loop() {
   for (int i = 0; i < 3; i++) {
     if (motorStopPending[i]) {
       motorStopPending[i] = false;
-      
-      // 励磁常時ONフラグがOFFの場合のみ励磁をOFFにする
-      if (!excitationAlwaysOn[i]) {
-        digitalWrite(enaPins[i], HIGH);  // 励磁OFF
-      }
-      
-      // ポンプ状態を更新
-      updatePumpState(i);
-      
       // 停止時にEEPROMに累積ステップ数を保存
       saveStepsToEEPROM(i);
-      
-      // 非同期Valve遅延管理を開始（モーター自動停止 → 0.5秒後 → Valve閉鎖）
-      startValveDelay(i, VALVE_DELAY_CLOSE_AFTER, false, false, 0);
+
+      // 励磁OFFはすぐに行わず、0.5秒後に行う（バルブ閉鎖と同様の遅延処理を流用）
+      // valveState: バルブは常時Openの場合は閉じない（falseだと閉じる）
+      bool valveShouldClose = !valveNormallyOpen[i];
+
+      // motorEnable=false: 0.5秒後にモーター停止（励磁OFF）を実行
+      startValveDelay(i, VALVE_DELAY_CLOSE_AFTER, valveShouldClose, false, 0);
+
+      // ポンプ状態は遅延処理後に updatePumpState が行われるが、ここでも一時的に更新
+      updatePumpState(i);
     }
   }
 }
