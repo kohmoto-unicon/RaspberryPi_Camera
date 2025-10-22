@@ -716,6 +716,10 @@
             <label for="commandDisplay{{ pump }}">送信コマンド</label>
             <textarea id="commandDisplay{{ pump }}" rows="3" class="command-display" readonly placeholder="コマンドが送信されるとここに表示されます"></textarea>
           </div>
+          <!-- トータル回転数リセット（見た目のみ、実装は後で） -->
+          <div class="control-group">
+            <button id="resetTotalBtn{{ pump }}" class="btn btn-info" onclick="onResetTotalClicked({{ pump }})">トータル回転数リセット</button>
+          </div>
         </div>
         {% endfor %}
       </div>
@@ -969,35 +973,39 @@
     }
 
     // ポンプコマンド送信
+    // 返り値: サーバーからのパース済みJSONオブジェクト（失敗時はundefined）
     async function sendPumpCommand(pump, action, value = "000000", microstepState = "0") {
       console.log(`[DEBUG] sendPumpCommand呼び出し: ポンプ${pump}, アクション${action}, isAutoSending=${isAutoSending}`);
-      
+
       if (isAutoSending) {
         console.log('自動送信中のため、ポンプコマンド送信をスキップします');
         alert('自動送信中です。しばらくお待ちください。');
-        return;
+        return undefined;
       }
-      
+
       try {
         const response = await fetch(`/api/pump_control?pump=${pump}&action=${action}&value=${value}&microstep=${microstepState}`);
         const data = await response.json();
-        
+
         // 送信コマンドの内容を表示
-        if (data.command_bytes && data.command_bytes.length > 0) {
+        if (data && data.command_bytes && data.command_bytes.length > 0) {
           const commandDisplay = document.getElementById('commandDisplay' + pump);
           if (commandDisplay) {
             const commandBytes = new Uint8Array(data.command_bytes);
             commandDisplay.value = formatCommandBytes(commandBytes, pump);
           }
         }
-        
-        if (data.success) {
+
+        if (data && data.success) {
           console.log(data.message);
-        } else {
+        } else if (data) {
           console.error('送信失敗:', data.message);
         }
+
+        return data;
       } catch (error) {
         console.error('通信エラー:', error);
+        return undefined;
       }
     }
 
@@ -1931,6 +1939,44 @@
         console.log('漏液チェックがOFFのため、自動回転速度取得は開始されません');
       }
     });
+
+    // トータル回転数リセット（サーバーへ 'I' コマンドを送信）
+    async function onResetTotalClicked(pump) {
+      try {
+        const confirmMsg = 'ポンプ' + pump + 'のトータル回転数をリセットしてよいですか？\n\nこの操作は元に戻せません。';
+        if (!confirm(confirmMsg)) return;
+
+        // コマンド仕様に従い、値フィールドは000001～000003でポンプ1～3を指定する
+        // UI上はポンプ1～6があるため、4-6はそれぞれ1-3にマップする
+        let targetIndex = pump;
+        if (pump >= 4 && pump <= 6) {
+          targetIndex = pump - 3;
+        }
+
+        const valueStr = String(targetIndex).padStart(6, '0'); // e.g. "000001"
+
+        // 送信（サーバーがArduinoへ転送する想定）
+        const data = await sendPumpCommand(pump, 'I', valueStr);
+
+        if (data && data.success) {
+          // 成功したら画面表示とローカルストレージを0にする
+          const display = document.getElementById('totalRevolutions' + pump);
+          if (display) {
+            display.textContent = '0 回転';
+          }
+          saveTotalRevolutions(pump, 0);
+
+          alert('トータル回転数をリセットしました');
+        } else if (data) {
+          alert('リセットに失敗しました: ' + (data.message || '不明なエラー'));
+        } else {
+          alert('通信エラーによりリセットできませんでした');
+        }
+      } catch (err) {
+        console.error('トータル回転数リセットエラー:', err);
+        alert('リセット中にエラーが発生しました');
+      }
+    }
   </script>
 </body>
 </html>
