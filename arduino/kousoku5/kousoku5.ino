@@ -104,6 +104,12 @@ volatile unsigned long decelStartStep[3] = {0, 0, 0}; // 減速開始ステッ�
 volatile bool isDecelerating[3] = {false, false, false}; // 減速中フラグ
 volatile unsigned long currentRunSteps[3] = {0, 0, 0}; // 現在の動作での一時的なステップカウンター（Sコマンド用）
 
+// ==== 新仕様: 400ステップサイクルカウンタと停止制御 ====
+volatile unsigned int stepCounter[3] = {0, 0, 0}; // 1-400の範囲でカウント（401→1にリセット）
+volatile float stopCommandSpeedRpm[3] = {0.0f, 0.0f, 0.0f}; // S受信時の速度(rpm)を保持
+volatile unsigned long stepsToStop[3] = {0, 0, 0}; // 停止までのステップ数（800 - stepCounter）
+volatile bool maintainConstantSpeed[3] = {false, false, false}; // 一定速度維持フラグ
+
 // ==== 台形加速事前計算配列 ====
 #define MAX_TRAPEZOID_STEPS 600   // 最大ステップ数（200rpm、0.2秒立ち上げ用）
 volatile unsigned int precomputedIntervals[3][MAX_TRAPEZOID_STEPS]; // 事前計算されたインターバル配列
@@ -791,31 +797,42 @@ inline void handleStep(int idx) {
       // （motorEnabledはLOWエッジで停止させる）
     }
 
-    // --- シンプルな台形加速・減速処理（HIGH時のみ実行） ---
+    // --- 【新仕様】台形加速・減速処理（HIGH時のみ実行） ---
     if (useTrapezoid[idx] && motorEnabled[idx]) {
       float targetSpeed = rpmToSps(globalSpeedRpm);
       
-      // 停止要求がある場合、減速開始位置をチェック（currentRunStepsを使用）
-      if (stopRequested[idx] && !isDecelerating[idx]) {
-        if (currentRunSteps[idx] >= decelStartStep[idx]) {
-          // 減速開始
-          isDecelerating[idx] = true;
-        }
-      }
-      
-      // 減速中の場合
-      if (isDecelerating[idx]) {
-        // 毎ステップ4steps/sずつ減速
-        if (currentSpeedSps[idx] > minStartSpeedSps) {
-          currentSpeedSps[idx] -= 4.0f;
-          if (currentSpeedSps[idx] < minStartSpeedSps) {
-            currentSpeedSps[idx] = minStartSpeedSps;
+      // 停止要求がある場合の処理
+      if (stopRequested[idx]) {
+        // 一定速度維持モードの場合
+        if (maintainConstantSpeed[idx]) {
+          // 減速開始位置に到達したかチェック
+          if (!isDecelerating[idx] && currentRunSteps[idx] >= decelStartStep[idx]) {
+            // 減速開始
+            isDecelerating[idx] = true;
+            maintainConstantSpeed[idx] = false; // 一定速度維持モード終了
+          } else {
+            // まだ減速開始位置に到達していない場合、現在速度を維持
+            // targetSpeedSpsは既にstopCommandSpeedRpmに固定されている
+            currentSpeedSps[idx] = targetSpeedSps[idx];
           }
         }
-        // 最小速度に達した後も、remainingStepsが0になるまで最小速度で動作継続
-        // （停止判定はLOWエッジでremainingSteps==0のチェックで行う）
+        
+        // 減速中の場合：1ステップごとに4rpm減速
+        if (isDecelerating[idx]) {
+          // 現在速度をrpmに変換
+          float currentRpm = (currentSpeedSps[idx] * 60.0f) / (float)stepsPerRev;
+          
+          // 4rpm減速
+          currentRpm -= 4.0f;
+          if (currentRpm < 650.0f) {
+            currentRpm = 650.0f; // 最小速度650rpmで維持
+          }
+          
+          // rpmをsteps/sに戻す
+          currentSpeedSps[idx] = (currentRpm * (float)stepsPerRev) / 60.0f;
+        }
       } else {
-        // 加速中：現在の速度が目標に達するまで加速
+        // 通常の加速処理（停止要求がない場合）
         if (currentSpeedSps[idx] < targetSpeed) {
           currentSpeedSps[idx] += 4.0f; // 毎ステップ4steps/s増加
           if (currentSpeedSps[idx] > targetSpeed) {
@@ -838,6 +855,13 @@ inline void handleStep(int idx) {
     // LOWエッジで累積ステップ数とプラン進捗を更新（1ステップ完了）
     totalSteps[idx]++;  // 永続的な累積ステップ数（回転数表示用）
     currentRunSteps[idx]++;  // 現在の動作での一時カウンター（Sコマンド用）
+    
+    // 新仕様: 400ステップサイクルカウンタの更新（1〜400の範囲、401→1）
+    stepCounter[idx]++;
+    if (stepCounter[idx] > 400) {
+      stepCounter[idx] = 1;
+    }
+    
     if (planActive[idx]) { 
       planStepsDone[idx]++; 
     }
@@ -853,26 +877,20 @@ inline void handleStep(int idx) {
         shouldStop = true;
         fixedStepCompleted[idx] = false; // フラグをクリア
       }
-      // 条件2: Sコマンド停止要求がある
+      // 条件2: Sコマンド停止要求がある【新仕様】
       else if (stopRequested[idx]) {
-        // 台形加速ON：減速完了後に400の倍数で停止
-        if (useTrapezoid[idx]) {
-          if (isDecelerating[idx]) {
-            // 最小速度まで減速完了している場合
-            if (currentSpeedSps[idx] <= minStartSpeedSps) {
-              // 400の倍数に到達したら停止
-              if (currentRunSteps[idx] > 0 && (currentRunSteps[idx] % 400) == 0) {
-                shouldStop = true;
-              }
-            }
-          }
+        // 新仕様：stepCounterが800に到達したら停止（400の倍数で確実に停止）
+        // stepCounterは1-400の範囲で、800ステップ後は stepCounter が元の値に戻る
+        // stepsToStop がカウントダウンされて0になるタイミングで停止
+        
+        // 停止までの残ステップをカウントダウン
+        if (stepsToStop[idx] > 0) {
+          stepsToStop[idx]--;
         }
-        // 台形加速OFF：即座に400の倍数で停止
-        else {
-          // 400の倍数に到達したら即座に停止
-          if (currentRunSteps[idx] > 0 && (currentRunSteps[idx] % 400) == 0) {
-            shouldStop = true;
-          }
+        
+        // 停止までのステップ数が0になったら停止
+        if (stepsToStop[idx] == 0) {
+          shouldStop = true;
         }
       }
       
@@ -884,6 +902,7 @@ inline void handleStep(int idx) {
         // 減速フラグもリセット
         stopRequested[idx] = false;
         isDecelerating[idx] = false;
+        maintainConstantSpeed[idx] = false; // 【新仕様】一定速度維持フラグもリセット
       }
     }
     
@@ -1283,6 +1302,12 @@ void processCommand(byte* cmd) {
     isDecelerating[idx] = false;
     fixedStepCompleted[idx] = false;  // 固定ステップ完了フラグもリセット
     currentRunSteps[idx] = 0;  // 現在の動作での一時カウンターをリセット
+    
+    // 【新仕様】400ステップサイクルカウンタを0にリセット（動作開始時）
+    stepCounter[idx] = 0;
+    maintainConstantSpeed[idx] = false; // 一定速度維持フラグもリセット
+    stepsToStop[idx] = 0; // 停止までのステップ数もリセット
+    
     // 注意：totalStepsは累積ステップ数なのでリセットしない（EEPROMに保存される永続値）
     
     // 台形加減速の事前計画を設定（遅延処理とモーター即座開始の両方で使用）
@@ -1397,43 +1422,75 @@ void processCommand(byte* cmd) {
     lcdClear();
     lcdPrint("Start");
   } else if (action == 'S') {  // 停止
-    // 停止コマンド受信時：
-    // 1. 現在速度から最小速度(650steps/s)まで減速するのに必要なステップ数を計算
-    // 2. その減速ステップ数 + 次の400の倍数までのステップ数を計算
-    // 3. それまで定常速度で動かし、その後減速開始
-    
-    noInterrupts();
-    unsigned long currentSteps = currentRunSteps[idx];  // 現在の動作での一時カウンターを使用
-    interrupts();
+    // 【新仕様】停止コマンド受信時の減速処理
+    // 1. stepCounter(1-400)と現在速度(rpm)を読み取る
+    // 2. "減速に必要なステップ数" = (現在速度rpm - 650) / 4 + 1 (整数演算)
+    // 3. "停止までのステップ数" = 800 - stepCounter
+    // 4. "停止までのステップ数" - "減速に必要なステップ数" の間は現在速度で一定速度動作（加速を打ち切り）
+    // 5. 両者が等しくなったら減速開始、1ステップごとに4rpm減速
     
     // モーターが動作中の場合
     if (motorEnabled[idx]) {
-      // 毎ステップ4steps/sずつ減速する場合、必要なステップ数を計算
-      // 650steps/s まで落とすのに必要なステップ数
-      // 現在速度 = 650 + 4*n (n=ステップ数)
-      // n = (現在速度 - 650) / 4
-      float currentSpeed = currentSpeedSps[idx];
-      if (currentSpeed < minStartSpeedSps) currentSpeed = minStartSpeedSps;
+      noInterrupts();
+      unsigned int currentStepCount = stepCounter[idx];  // 1-400の範囲のカウンタ
+      float currentSpeedSps_local = currentSpeedSps[idx]; // 現在速度 steps/s
+      interrupts();
       
-      // 減速ステップ数を計算
-      float decelStepsF = (currentSpeed - minStartSpeedSps) / 4.0f;
-      unsigned long decelSteps = (unsigned long)(decelStepsF + 0.5f);
-      if (decelSteps < 1) decelSteps = 1;
+      // 現在速度をrpmに変換（steps/s → rpm）
+      // rpm = (steps/s * 60) / stepsPerRev
+      long currentSpeedRpm = (long)((currentSpeedSps_local * 60.0f) / (float)stepsPerRev + 0.5f);
       
-      // 減速完了後の位置
-      unsigned long decelEndSteps = currentSteps + decelSteps;
+      // "停止までのステップ数" = 800 - stepCounter
+      long stepsToStopVal = 800 - currentStepCount;
+      if (stepsToStopVal < 0) stepsToStopVal = 0; // 安全対策
       
-      // 次の400の倍数を計算（減速完了位置以降）
-      unsigned long nextMultiple = ((decelEndSteps / 400) + 1) * 400;
-      
-      // 減速開始位置 = 次の400の倍数 - 減速ステップ数
-      unsigned long decelStartPos = (nextMultiple > decelSteps) ? (nextMultiple - decelSteps) : 0;
-      
-      // 停止要求と減速パラメータを設定
-      stopRequested[idx] = true;
-      decelStepsRequired[idx] = decelSteps;
-      decelStartStep[idx] = decelStartPos;
-      isDecelerating[idx] = false;
+      // 【減速不要処理】現在速度が650rpm以下または非常に近い場合
+      if (currentSpeedRpm <= 655) {  // 650rpm + 安全マージン5rpm
+        // 減速不要：現在速度のまま停止位置まで進んで停止
+        stopRequested[idx] = true;
+        decelStepsRequired[idx] = 0; // 減速ステップ数は0
+        stepsToStop[idx] = (unsigned long)stepsToStopVal;
+        stopCommandSpeedRpm[idx] = (float)currentSpeedRpm;
+        
+        // 減速開始位置 = 停止位置（減速せずに停止）
+        noInterrupts();
+        unsigned long currentRun = currentRunSteps[idx];
+        interrupts();
+        decelStartStep[idx] = currentRun + (unsigned long)stepsToStopVal;
+        
+        // 一定速度維持モード（現在速度で停止位置まで）
+        maintainConstantSpeed[idx] = true;
+        targetSpeedSps[idx] = currentSpeedSps_local;
+        isDecelerating[idx] = false; // 減速しない
+      } else {
+        // 【通常の減速処理】現在速度が650rpmより高い場合
+        // "減速に必要なステップ数" = (現在速度rpm - 650) / 4 + 1 (整数演算)
+        long decelSteps = ((currentSpeedRpm - 650) / 4) + 1;
+        if (decelSteps < 1) decelSteps = 1;
+        
+        // 停止要求フラグと減速パラメータを設定
+        stopRequested[idx] = true;
+        decelStepsRequired[idx] = (unsigned long)decelSteps;
+        stepsToStop[idx] = (unsigned long)stepsToStopVal;
+        stopCommandSpeedRpm[idx] = (float)currentSpeedRpm;
+        
+        // 減速開始位置を計算：現在の currentRunSteps + (停止までのステップ数 - 減速に必要なステップ数)
+        long stepsUntilDecel = stepsToStopVal - decelSteps;
+        if (stepsUntilDecel < 0) stepsUntilDecel = 0;
+        
+        noInterrupts();
+        unsigned long currentRun = currentRunSteps[idx];
+        interrupts();
+        
+        decelStartStep[idx] = currentRun + (unsigned long)stepsUntilDecel;
+        
+        // 加速を打ち切り、現在速度で一定速度維持モードに移行
+        maintainConstantSpeed[idx] = true;
+        targetSpeedSps[idx] = currentSpeedSps_local; // 目標速度を現在速度に固定
+        
+        // 減速はまだ開始しない（handleStep内で decelStartStep に到達したら開始）
+        isDecelerating[idx] = false;
+      }
       
       // LCD表示
       lcdClear();
