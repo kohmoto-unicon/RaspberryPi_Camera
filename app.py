@@ -1706,6 +1706,36 @@ def api_check_leak_status():
                     if DEBUG_LEAK_LOG:
                         print(f"[LEAK CHECK] Jコマンド応答から漏液状態を更新: {leak_detected_status}")
                     
+                    # 漏液が検出されたかつポート2が有効な場合、ポンプ4～6を緊急停止
+                    if leak_detected_status and serial_initialized2:
+                        if DEBUG_LEAK_LOG:
+                            print(f"[LEAK CHECK] 漏液検出！ポンプ4～6の緊急停止コマンド（Zコマンド）を送信中...")
+                        
+                        # Zコマンド（緊急停止）を生成
+                        z_cmd = bytearray(11)
+                        z_cmd[0] = 0x02
+                        z_cmd[1] = ord('0')  # ポンプ番号
+                        z_cmd[2] = ord('Z')  # 緊急停止コマンド
+                        for i, c in enumerate("000000"):
+                            z_cmd[3 + i] = ord(c)
+                        z_cmd[9] = calc_checksum(z_cmd)
+                        z_cmd[10] = 0x03
+                        
+                        # ポート2の古いバッファをクリア
+                        if ser_2.in_waiting > 0:
+                            old_data = ser_2.read(ser_2.in_waiting)
+                            if DEBUG_SERIAL_LOG:
+                                print(f"[ACM1({SERIAL_PORT_2})] 古いバッファデータをクリア: {old_data.hex()} ({len(old_data)} bytes)")
+                        
+                        # Zコマンドを送信
+                        try:
+                            ser_2.write(z_cmd)
+                            if DEBUG_SERIAL_LOG:
+                                hex_str = ' '.join([f'{b:02X}' for b in z_cmd])
+                                print(f"[ACM1({SERIAL_PORT_2})] 緊急停止コマンド送信: {hex_str}")
+                        except Exception as e:
+                            print(f"[ERROR] ポート2への緊急停止コマンド送信に失敗: {e}")
+                    
                     return jsonify({
                         'success': True,
                         'leak_detected': leak_detected_status,
