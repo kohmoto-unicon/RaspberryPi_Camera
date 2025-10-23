@@ -1913,6 +1913,22 @@ void processCommand(byte* cmd) {
     lcdPrint("HEX: ");
     lcdPrint(hexStr);
     displaySerialSend("TOTAL", response, 10);
+  } else if (action == 'I') {  // トータル回転数リセット
+    // 割り込み禁止にして、totalSteps を0にリセット（安全性確保）
+    noInterrupts();
+    totalSteps[idx] = 0;
+    interrupts();
+    
+    // EEPROM に 0 を書き込む
+    saveStepsToEEPROM(idx);
+    
+    // LCD表示
+    lcdClear();
+    lcdPrint("Total Reset");
+    lcdSetCursor(0, 1);
+    char resetMsg[17];
+    sprintf(resetMsg, "Pump%d", idx + 1);
+    lcdPrint(resetMsg);
   } else if (action == 'J') {  // 制御状態取得（全ポンプ）
     // 全ポンプの状態を返すため、ポンプ番号は無視
     char response[11];

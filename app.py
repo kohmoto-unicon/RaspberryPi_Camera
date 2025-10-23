@@ -90,8 +90,8 @@ IS_WINDOWS = platform.system() == "Windows"
 
 # シリアル通信設定（ハイセラポンプ制御用）
 if IS_WINDOWS:
-    SERIAL_PORT_1 = "COM18"  # Windows環境の場合（ハイセラポンプ1-3用）
-    SERIAL_PORT_2 = "COM20"  # Windows環境の場合（ハイセラポンプ4-6用）
+    SERIAL_PORT_1 = "COM20"  # Windows環境の場合（ハイセラポンプ1-3用）
+    SERIAL_PORT_2 = "COM18"  # Windows環境の場合（ハイセラポンプ4-6用）
 else:
     SERIAL_PORT_1 = "/dev/ttyACM0"  # Linux/Raspberry Pi環境の場合（ハイセラポンプ1-3用）
     SERIAL_PORT_2 = "/dev/ttyACM1"  # Linux/Raspberry Pi環境の場合（ハイセラポンプ4-6用）
@@ -1150,6 +1150,27 @@ def api_get_current():
     cmd[9] = calc_checksum(cmd)
     cmd[10] = 0x03
     
+    # ポンプ番号に応じて適切なシリアルポートを選択
+    if 1 <= pump <= 3:
+        target_ser = ser_1
+        port_name = f"ACM0({SERIAL_PORT_1})"
+    elif 4 <= pump <= 6:
+        target_ser = ser_2
+        port_name = f"ACM1({SERIAL_PORT_2})"
+    else:
+        return jsonify({
+            'success': False,
+            'current': 0,
+            'message': f'無効なポンプ番号: {pump}',
+            'command_bytes': list(cmd)
+        })
+    
+    # ===== 重要: シリアルバッファをクリア（古いデータを除去） =====
+    if target_ser.in_waiting > 0:
+        old_data = target_ser.read(target_ser.in_waiting)
+        if DEBUG_SERIAL_LOG:
+            print(f"[{port_name}] 古いバッファデータをクリア: {old_data.hex()} ({len(old_data)} bytes)")
+    
     # 電流データ取得コマンドを送信
     success = send_serial_command(pump, "C", "000000")
     
@@ -1166,23 +1187,8 @@ def api_get_current():
     start_time = time.time()
     response = None
     
-    # ポンプ番号に応じて適切なシリアルポートを選択
-    if 1 <= pump <= 3:
-        target_ser = ser_1
-        port_name = f"ACM0({SERIAL_PORT_1})"
-    elif 4 <= pump <= 6:
-        target_ser = ser_2
-        port_name = f"ACM1({SERIAL_PORT_2})"
-    else:
-        return jsonify({
-            'success': False,
-            'current': 0,
-            'message': f'無効なポンプ番号: {pump}',
-            'command_bytes': list(cmd)
-        })
-    
     if DEBUG_SERIAL_LOG:
-        print(f"[{port_name}] 電流取得コマンド送信: {cmd.hex()}")
+        print(f"[{port_name}] Cコマンド送信完了。応答待機中...")
     
     # 漏液チェックを先に実行
     check_leak_detection()
@@ -1191,7 +1197,8 @@ def api_get_current():
         if target_ser.in_waiting >= 10:  # 10バイトの応答を待機
             response = target_ser.read(10)
             if DEBUG_SERIAL_LOG:
-                print(f"[{port_name}] 電流取得応答受信: {response.hex()} ({len(response)} bytes)")
+                hex_str = ' '.join([f'{b:02X}' for b in response])
+                print(f"[{port_name}] Cコマンド応答受信: {hex_str} ({len(response)} bytes)")
             break
         time.sleep(0.01)
     
@@ -1269,6 +1276,27 @@ def api_get_rpm():
     cmd[9] = calc_checksum(cmd)
     cmd[10] = 0x03
     
+    # ポンプ番号に応じて適切なシリアルポートを選択
+    if 1 <= pump <= 3:
+        target_ser = ser_1
+        port_name = f"ACM0({SERIAL_PORT_1})"
+    elif 4 <= pump <= 6:
+        target_ser = ser_2
+        port_name = f"ACM1({SERIAL_PORT_2})"
+    else:
+        return jsonify({
+            'success': False,
+            'rpm': 0,
+            'message': f'無効なポンプ番号: {pump}',
+            'command_bytes': list(cmd)
+        })
+    
+    # ===== 重要: シリアルバッファをクリア（古いデータを除去） =====
+    if target_ser.in_waiting > 0:
+        old_data = target_ser.read(target_ser.in_waiting)
+        if DEBUG_SERIAL_LOG:
+            print(f"[{port_name}] 古いバッファデータをクリア: {old_data.hex()} ({len(old_data)} bytes)")
+    
     # 回転数データ取得コマンドを送信
     success = send_serial_command(pump, "X", "000000")
     
@@ -1285,23 +1313,8 @@ def api_get_rpm():
     start_time = time.time()
     response = None
     
-    # ポンプ番号に応じて適切なシリアルポートを選択
-    if 1 <= pump <= 3:
-        target_ser = ser_1
-        port_name = f"ACM0({SERIAL_PORT_1})"
-    elif 4 <= pump <= 6:
-        target_ser = ser_2
-        port_name = f"ACM1({SERIAL_PORT_2})"
-    else:
-        return jsonify({
-            'success': False,
-            'rpm': 0,
-            'message': f'無効なポンプ番号: {pump}',
-            'command_bytes': list(cmd)
-        })
-    
     if DEBUG_SERIAL_LOG:
-        print(f"[{port_name}] 回転数取得コマンド送信: {cmd.hex()}")
+        print(f"[{port_name}] Xコマンド送信完了。応答待機中...")
     
     # 漏液チェックを先に実行
     check_leak_detection()
@@ -1312,7 +1325,7 @@ def api_get_rpm():
             # 1バイト毎に空白を入れて表示
             if DEBUG_SERIAL_LOG:
                 hex_str = ' '.join([f'{b:02X}' for b in response])
-                print(f"[{port_name}] 回転数取得応答受信: {hex_str} ({len(response)} bytes)")
+                print(f"[{port_name}] Xコマンド応答受信: {hex_str} ({len(response)} bytes)")
             break
         time.sleep(0.01)
     
@@ -1390,6 +1403,28 @@ def api_get_total_revolutions():
     cmd[9] = calc_checksum(cmd)
     cmd[10] = 0x03
     
+    # ポンプ番号に応じて適切なシリアルポートを選択
+    if 1 <= pump <= 3:
+        target_ser = ser_1
+        port_name = f"ACM0({SERIAL_PORT_1})"
+    elif 4 <= pump <= 6:
+        target_ser = ser_2
+        port_name = f"ACM1({SERIAL_PORT_2})"
+    else:
+        return jsonify({
+            'success': False,
+            'total_revolutions': 0,
+            'message': f'無効なポンプ番号: {pump}',
+            'command_bytes': list(cmd)
+        })
+    
+    # ===== 重要: シリアルバッファをクリア（古いデータを除去） =====
+    # Tコマンド送信前に受信バッファをすべてクリアして、古いデータを除去
+    if target_ser.in_waiting > 0:
+        old_data = target_ser.read(target_ser.in_waiting)
+        if DEBUG_SERIAL_LOG:
+            print(f"[{port_name}] 古いバッファデータをクリア: {old_data.hex()} ({len(old_data)} bytes)")
+    
     # トータル回転数取得コマンドを送信
     success = send_serial_command(pump, "T", "000000")
     
@@ -1406,24 +1441,15 @@ def api_get_total_revolutions():
     start_time = time.time()
     response = None
     
-    # ポンプ番号に応じて適切なシリアルポートを選択
-    if 1 <= pump <= 3:
-        target_ser = ser_1
-        port_name = f"ACM0({SERIAL_PORT_1})"
-    elif 4 <= pump <= 6:
-        target_ser = ser_2
-        port_name = f"ACM1({SERIAL_PORT_2})"
-    else:
-        return jsonify({
-            'success': False,
-            'total_revolutions': 0,
-            'message': f'無効なポンプ番号: {pump}',
-            'command_bytes': list(cmd)
-        })
+    if DEBUG_SERIAL_LOG:
+        print(f"[{port_name}] Tコマンド送信完了。応答待機中...")
     
     while time.time() - start_time < 1.0:
         if target_ser.in_waiting >= 10:
             response = target_ser.read(10)
+            if DEBUG_SERIAL_LOG:
+                hex_str = ' '.join([f'{b:02X}' for b in response])
+                print(f"[{port_name}] Tコマンド応答受信: {hex_str} ({len(response)} bytes)")
             break
         time.sleep(0.01)
     
@@ -1500,6 +1526,15 @@ def api_get_control_status():
             'command_bytes': list(cmd)
         })
     
+    # ===== 重要: シリアルバッファをクリア（古いデータを除去） =====
+    target_ser = ser_1
+    port_name = f"ACM0({SERIAL_PORT_1})"
+    
+    if target_ser.in_waiting > 0:
+        old_data = target_ser.read(target_ser.in_waiting)
+        if DEBUG_SERIAL_LOG:
+            print(f"[{port_name}] 古いバッファデータをクリア: {old_data.hex()} ({len(old_data)} bytes)")
+    
     # 制御状態取得コマンドを送信（ポート1に送信）
     success = send_serial_command(1, "J", "000000")
     
@@ -1515,11 +1550,8 @@ def api_get_control_status():
     start_time = time.time()
     response = None
     
-    target_ser = ser_1
-    port_name = f"ACM0({SERIAL_PORT_1})"
-    
     if DEBUG_SERIAL_LOG:
-        print(f"[{port_name}] 制御状態取得コマンド送信: {cmd.hex()}")
+        print(f"[{port_name}] Jコマンド送信完了。応答待機中...")
     
     # 漏液チェックを先に実行
     check_leak_detection()
@@ -1529,7 +1561,7 @@ def api_get_control_status():
             response = target_ser.read(10)
             if DEBUG_SERIAL_LOG:
                 hex_str = ' '.join([f'{b:02X}' for b in response])
-                print(f"[{port_name}] 制御状態取得応答受信: {hex_str} ({len(response)} bytes)")
+                print(f"[{port_name}] Jコマンド応答受信: {hex_str} ({len(response)} bytes)")
             break
         time.sleep(0.01)
     
@@ -1910,8 +1942,8 @@ if __name__ == '__main__':
     parser.add_argument('--host', type=str, default='0.0.0.0', help='ホストアドレス（デフォルト: 0.0.0.0）')
     parser.add_argument('--use-ffmpeg', action='store_true', help='FFmpegストリーミングを使用（デフォルト: MJPEG）')
     # OSに応じたデフォルトポート設定
-    default_port_1 = 'COM18' if IS_WINDOWS else '/dev/ttyACM0'
-    default_port_2 = 'COM20' if IS_WINDOWS else '/dev/ttyACM1'
+    default_port_1 = 'COM20' if IS_WINDOWS else '/dev/ttyACM0'
+    default_port_2 = 'COM18' if IS_WINDOWS else '/dev/ttyACM1'
     default_syringe_port = 'COM4' if IS_WINDOWS else '/dev/ttyUSB0'
     
     parser.add_argument('--serial-port-1', type=str, default=default_port_1, 
