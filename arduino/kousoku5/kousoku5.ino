@@ -230,70 +230,8 @@ void processValveDelays() {
       } else if (elapsed >= valveDelayManagers[i].delayDuration && valveDelayManagers[i].motorActionPending) {
         // 0.5秒遅延後にモーター操作を実行
         if (valveDelayManagers[i].motorEnable) {
-          // モーター開始処理
-          digitalWrite(enaPins[i], LOW); // 励磁ON
-          remainingSteps[i] = valveDelayManagers[i].remainingSteps;
-          motorEnabled[i] = true;
-            // 動作開始時に減速開始タイミングを計算（固定回転用）
-            if (planActive[i]) {
-              decelStartStep[i] = currentRunSteps[i] + planAccelSteps[i] + planCruiseSteps[i];
-            }
-            // 起動時に目標速度・初速・加速度を再計算（停止後の低速化防止）
-            if (useTrapezoid[i]) {
-              // 目標速度は globalSpeedRpm を基準に再設定
-              targetSpeedSps[i] = rpmToSps(globalSpeedRpm);
-              if (targetSpeedSps[i] <= minStartSpeedSps) {
-                currentSpeedSps[i] = targetSpeedSps[i];
-              } else {
-                currentSpeedSps[i] = minStartSpeedSps;
-              }
-              if (targetSpeedSps[i] > currentSpeedSps[i]) {
-                float dv = targetSpeedSps[i] - currentSpeedSps[i];
-                accelerationSps2[i] = dv / targetRampTimeSec;
-                if (accelerationSps2[i] < 1.0f) accelerationSps2[i] = 1.0f;
-              }
-            }
-          updatePumpState(i);
-          
-          // 台形加減速設定
-          if (useTrapezoid[i]) {
-            // 加減速計算カウンターをリセット
-            trapezoidCalcCounter[i] = 0;
-            
-            // 【新仕様】初期速度設定
-            // 目標速度が設定されていない場合はglobalSpeedRpmを使用
-            if (targetSpeedSps[i] < 1.0f) {
-              targetSpeedSps[i] = rpmToSps(globalSpeedRpm);
-            }
-            
-            // 目標速度が650steps/s（minStartSpeedSps）以下の場合は加速不要、最初から目標速度で開始
-            if (targetSpeedSps[i] <= minStartSpeedSps) {
-              currentSpeedSps[i] = targetSpeedSps[i];
-            } else {
-              // 目標速度が650steps/sより高い場合は、650steps/s（minStartSpeedSps）から開始
-              currentSpeedSps[i] = minStartSpeedSps; // 650steps/s
-            }
-            
-            // 加速度の計算（目標速度への到達時間を考慮）- 互換性のため残す
-            if (targetSpeedSps[i] > currentSpeedSps[i]) {
-              float dv = targetSpeedSps[i] - currentSpeedSps[i];
-              accelerationSps2[i] = dv / targetRampTimeSec;
-              if (accelerationSps2[i] < 1.0f) accelerationSps2[i] = 1.0f;
-            }
-            
-            stepInterval[i] = spsToIntervalUs(currentSpeedSps[i]);
-            switch(i) {
-              case 0: setupTimer3(stepInterval[0]); break;
-              case 1: setupTimer4(stepInterval[1]); break;
-              case 2: setupTimer5(stepInterval[2]); break;
-            }
-          } else {
-            switch(i) {
-              case 0: setupTimer3(stepInterval[0]); break;
-              case 1: setupTimer4(stepInterval[1]); break;
-              case 2: setupTimer5(stepInterval[2]); break;
-            }
-          }
+          // モーター開始処理（共通関数を使用）
+          startMotorCommon(i, valveDelayManagers[i].remainingSteps);
         }
         valveDelayManagers[i].motorActionPending = false;
         // 遅延処理完了
@@ -508,7 +446,31 @@ bool getValveState(int valveNumber) {
   return false;
 }
 
-// ===================== シリアル送信表示ヘルパー関数 =====================
+// ===================== シリアル通信ヘルパー関数 =====================
+// チェックサム計算関数（1-7バイト目のXOR）
+byte calculateChecksum(const byte* data) {
+  byte checksum = 0;
+  for (int i = 1; i <= 7; i++) {
+    checksum ^= data[i];
+  }
+  return checksum;
+}
+
+// 応答パケット作成関数（STX/ポンプNo/データ6桁/CS/ETX）
+void buildResponse(byte* response, byte pumpNo, const char* data6) {
+  response[0] = 0x02;  // STX
+  response[1] = pumpNo + '0';  // ポンプ番号
+  
+  // データ6桁をコピー
+  for (int i = 0; i < 6; i++) {
+    response[2 + i] = data6[i];
+  }
+  
+  // チェックサム計算
+  response[8] = calculateChecksum(response);
+  response[9] = 0x03;  // ETX
+}
+
 // 送信データをLCDに表示する関数
 void displaySerialSend(const char* description, const byte* data, int length) {
   lcdSetCursor(0, 1);
@@ -526,6 +488,16 @@ void displaySerialSend(const char* description, const byte* data, int length) {
     // 長いデータの場合は説明文を表示
 //    lcdPrint(description);
     lcdPrint((const char*)data);
+  }
+}
+
+// LCD表示ヘルパー関数（1行または2行）
+void lcdShowMessage(const char* line1, const char* line2 = NULL) {
+  lcdClear();
+  lcdPrint(line1);
+  if (line2 != NULL) {
+    lcdSetCursor(0, 1);
+    lcdPrint(line2);
   }
 }
 
@@ -753,10 +725,77 @@ inline unsigned int spsToIntervalUs(float sps) {
   return (unsigned int)(1000000.0f / sps);
 }
 
+// ===================== 台形加速初期化ヘルパー関数 =====================
+// 台形加速の初速と加速度を設定する関数
+void initializeTrapezoidSpeed(int idx) {
+  if (idx < 0 || idx >= 3) return;
+  
+  // 加減速計算カウンターをリセット
+  trapezoidCalcCounter[idx] = 0;
+  
+  // 目標速度が設定されていない場合はglobalSpeedRpmを使用
+  if (targetSpeedSps[idx] < 1.0f) {
+    targetSpeedSps[idx] = rpmToSps(globalSpeedRpm);
+  }
+  
+  // 目標速度が650steps/s（minStartSpeedSps）以下の場合は加速不要、最初から目標速度で開始
+  if (targetSpeedSps[idx] <= minStartSpeedSps) {
+    currentSpeedSps[idx] = targetSpeedSps[idx];
+  } else {
+    // 目標速度が650steps/sより高い場合は、650steps/s（minStartSpeedSps）から開始
+    currentSpeedSps[idx] = minStartSpeedSps; // 650steps/s
+  }
+  
+  // 加速度の計算（目標速度への到達時間を考慮）
+  if (targetSpeedSps[idx] > currentSpeedSps[idx]) {
+    float dv = targetSpeedSps[idx] - currentSpeedSps[idx];
+    accelerationSps2[idx] = dv / targetRampTimeSec;
+    if (accelerationSps2[idx] < 1.0f) accelerationSps2[idx] = 1.0f;
+  }
+}
+
 // ===================== センサ読み出しユーティリティ =====================
 inline bool isLeakDetected(int idx) {
   // INPUT_PULLUPのため、漏液検出時はLOWとする想定
   return digitalRead(leakSensorPins[idx]) == LOW;
+}
+
+// ===================== モーター起動共通処理 =====================
+// モーター起動処理（バルブ遅延管理から呼び出される共通処理）
+void startMotorCommon(int idx, unsigned long steps) {
+  if (idx < 0 || idx >= 3) return;
+  
+  // モーター起動
+  digitalWrite(enaPins[idx], LOW); // 励磁ON
+  remainingSteps[idx] = steps;
+  motorEnabled[idx] = true;
+  
+  // 動作開始時に減速開始タイミングを計算（固定回転用）
+  if (planActive[idx]) {
+    decelStartStep[idx] = currentRunSteps[idx] + planAccelSteps[idx] + planCruiseSteps[idx];
+  }
+  
+  // 起動時に目標速度・初速・加速度を再計算（停止後の低速化防止）
+  if (useTrapezoid[idx]) {
+    // 目標速度は globalSpeedRpm を基準に再設定
+    targetSpeedSps[idx] = rpmToSps(globalSpeedRpm);
+    initializeTrapezoidSpeed(idx);
+    
+    stepInterval[idx] = spsToIntervalUs(currentSpeedSps[idx]);
+    switch(idx) {
+      case 0: setupTimer3(stepInterval[0]); break;
+      case 1: setupTimer4(stepInterval[1]); break;
+      case 2: setupTimer5(stepInterval[2]); break;
+    }
+  } else {
+    switch(idx) {
+      case 0: setupTimer3(stepInterval[0]); break;
+      case 1: setupTimer4(stepInterval[1]); break;
+      case 2: setupTimer5(stepInterval[2]); break;
+    }
+  }
+  
+  updatePumpState(idx);
 }
 
 // ===================== ステップトグル関数 =====================
@@ -1257,8 +1296,7 @@ void processCommand(byte* cmd) {
   char action = cmd[2];
   if (action == 'Z') {  // 緊急停止
     stopAllPumps();
-    lcdClear();
-    lcdPrint("Emergency Stop");
+    lcdShowMessage("Emergency Stop");
     return;
   }
 
@@ -1275,8 +1313,7 @@ void processCommand(byte* cmd) {
     // モーターが既に動作中、停止処理待ち、またはバルブ遅延管理でモーター開始待ちの場合はMコマンドを無視
     if (motorEnabled[idx] || motorStopPending[idx] || valveDelayManagers[idx].active) {
       // LCD表示
-      lcdClear();
-      lcdPrint("Already Running");
+      lcdShowMessage("Already Running");
       return;
     }
     
@@ -1348,50 +1385,8 @@ void processCommand(byte* cmd) {
     
     // バルブ常時OpenフラグがONの場合、すでにバルブは開いているので遅延管理は不要
     if (valveNormallyOpen[idx]) {
-      // モーターを即座に開始
-      digitalWrite(enaPins[idx], LOW); // 励磁ON
-      remainingSteps[idx] = (value > 0) ? value * 2 : 0; // 受信したステップ数の2倍で動作
-      motorEnabled[idx] = true;
-      // 動作開始時に減速開始タイミングを計算（固定回転用）
-      if (planActive[idx]) {
-        decelStartStep[idx] = currentRunSteps[idx] + planAccelSteps[idx] + planCruiseSteps[idx];
-      }
-      updatePumpState(idx);
-      
-      // 台形加減速設定
-      if (useTrapezoid[idx]) {
-        // 起動時に必ず目標速度・初速・加速度を再計算して上書き（停止後再開時の低速化対策）
-        trapezoidCalcCounter[idx] = 0;
-        // 目標速度はグローバル速度を基準に再計算（ローカルVコマンドの上書きを避けたい場合は別途フラグ化可能）
-        targetSpeedSps[idx] = rpmToSps(globalSpeedRpm);
-
-        // 開始速度の決定
-        if (targetSpeedSps[idx] <= minStartSpeedSps) {
-          currentSpeedSps[idx] = targetSpeedSps[idx];
-        } else {
-          currentSpeedSps[idx] = minStartSpeedSps; // 650 steps/s
-        }
-
-        // 加速度の再計算（0.2秒で到達する設計）
-        if (targetSpeedSps[idx] > currentSpeedSps[idx]) {
-          float dv = targetSpeedSps[idx] - currentSpeedSps[idx];
-          accelerationSps2[idx] = dv / targetRampTimeSec;
-          if (accelerationSps2[idx] < 1.0f) accelerationSps2[idx] = 1.0f;
-        }
-        
-        stepInterval[idx] = spsToIntervalUs(currentSpeedSps[idx]);
-        switch(idx) {
-          case 0: setupTimer3(stepInterval[0]); break;
-          case 1: setupTimer4(stepInterval[1]); break;
-          case 2: setupTimer5(stepInterval[2]); break;
-        }
-      } else {
-        switch(idx) {
-          case 0: setupTimer3(stepInterval[0]); break;
-          case 1: setupTimer4(stepInterval[1]); break;
-          case 2: setupTimer5(stepInterval[2]); break;
-        }
-      }
+      // モーターを即座に開始（共通関数を使用）
+      startMotorCommon(idx, (value > 0) ? value * 2 : 0);
     } else {
       // 非同期Valve遅延管理を開始（Valve開放 → 0.5秒後 → モーター開始）
       startValveDelay(idx, VALVE_DELAY_OPEN_BEFORE, true, true, (value > 0) ? value * 2 : 0);
@@ -1503,19 +1498,14 @@ void processCommand(byte* cmd) {
       lcdPrint("Stop");
     } else {
       // モーターが動作していない場合
-      lcdClear();
-      lcdPrint("Already Stopped");
+      lcdShowMessage("Already Stopped");
     }
   } else if (action == 'F') {  // 正転
     digitalWrite(dirPins[idx], LOW);
-    // LCD表示
-    lcdClear();
-    lcdPrint("Receive Forward");
+    lcdShowMessage("Receive Forward");
   } else if (action == 'R') {  // 逆転
     digitalWrite(dirPins[idx], HIGH);
-    // LCD表示
-    lcdClear();
-    lcdPrint("Receive Reverse");
+    lcdShowMessage("Receive Reverse");
   } else if (action == 'V') {  // 速度変更 (rpm)
     if (value > 0) {
       if (useTrapezoid[idx]) {
@@ -1534,16 +1524,12 @@ void processCommand(byte* cmd) {
         pendingIntervalUpdate[idx] = true;
         targetSpeedSps[idx] = rpmToSps(value);
       }
-      // LCD表示
-      lcdClear();
-      lcdPrint("Receive Speed");
+      lcdShowMessage("Receive Speed");
     }
   } else if (action == 'E') {  // Enable ON
     digitalWrite(enaPins[idx], LOW);
     updatePumpState(idx); // ポンプ状態を更新
-    // LCD表示
-    lcdClear();
-    lcdPrint("Receive EnableON");
+    lcdShowMessage("Receive EnableON");
   } else if (action == 'D') {  // Enable OFF
     // 励磁常時ONフラグがOFFの場合のみ励磁をOFFにする
     if (!excitationAlwaysOn[idx]) {
@@ -1557,9 +1543,7 @@ void processCommand(byte* cmd) {
       startValveDelay(idx, VALVE_DELAY_CLOSE_AFTER, false, false, 0);
     }
     
-    // LCD表示
-    lcdClear();
-    lcdPrint("ReceiveEnableOFF");
+    lcdShowMessage("ReceiveEnableOFF");
   } else if (action == 'A') {  // 台形加減速のON/OFF（0:OFF, それ以外:ON）
     useTrapezoid[idx] = (value != 0);
     // OFFにしたら当該モータのみ等速設定へ即時反映
@@ -1574,17 +1558,13 @@ void processCommand(byte* cmd) {
       planActive[idx] = false;
       planStepsDone[idx] = 0;
     }
-    // LCD表示
-    lcdClear();
-    lcdPrint("ReceiveTrapezoid");
+    lcdShowMessage("ReceiveTrapezoid");
   } else if (action == 'B') {  // バルブ常時Open設定（000000:OFF, 000001:ON）
     if (value == 1) {
       // バルブ常時OpenフラグをONに設定し、ただちにバルブをOPENする
       valveNormallyOpen[idx] = true;
       openValve(pumpNo);
-      // LCD表示
-      lcdClear();
-      lcdPrint("Valve Normally Open ON");
+      lcdShowMessage("Valve Normally Open ON");
     } else if (value == 0) {
       // バルブ常時OpenフラグをOFFに設定
       valveNormallyOpen[idx] = false;
@@ -1592,9 +1572,7 @@ void processCommand(byte* cmd) {
       if (!motorEnabled[idx]) {
         closeValve(pumpNo);
       }
-      // LCD表示
-      lcdClear();
-      lcdPrint("Valve Normally Open OFF");
+      lcdShowMessage("Valve Normally Open OFF");
     }
   } else if (action == 'L') {  // 励磁常時ON設定（000000:OFF, 000001:ON）
     if (value == 1) {
@@ -1602,9 +1580,7 @@ void processCommand(byte* cmd) {
       excitationAlwaysOn[idx] = true;
       digitalWrite(enaPins[idx], LOW);  // 励磁ON
       updatePumpState(idx);
-      // LCD表示
-      lcdClear();
-      lcdPrint("Excitation Always ON");
+      lcdShowMessage("Excitation Always ON");
     } else if (value == 0) {
       // 励磁常時ONフラグをOFFに設定
       excitationAlwaysOn[idx] = false;
@@ -1613,64 +1589,27 @@ void processCommand(byte* cmd) {
         digitalWrite(enaPins[idx], HIGH);  // 励磁OFF
         updatePumpState(idx);
       }
-      // LCD表示
-      lcdClear();
-      lcdPrint("Excitation Always OFF");
+      lcdShowMessage("Excitation Always OFF");
     }
   } else if (action == 'C') {  // 電流データ取得（ダミー応答）
-    // STX + ポンプNo + 電流値(符号+5桁整数) + ETX + CS の形式で送信
-    char response[11];
-    response[0] = 0x02;  // STX
-    response[1] = pumpNo + '0';  // ポンプ番号
-    
-    // ダミーの電流値 "+00000" を設定
-    const char* dummyCurrent = "+00000";
-    for (int i = 0; i < 6; i++) {
-      response[2 + i] = dummyCurrent[i];
-    }
-    
-    // チェックサム計算（1-7バイト目: ポンプ番号1バイト + 電流値6バイト）
-    byte checksum = 0;
-    for (int i = 1; i <= 7; i++) {
-      checksum ^= response[i];
-    }
-    response[8] = checksum;
-    
-    response[9] = 0x03;  // ETX
+    byte response[10];
+    buildResponse(response, pumpNo, "+00000");
     
     // 応答を送信
     Serial.write(response, 10);
     
     // LCD表示
-    lcdClear();
-    lcdPrint("Receive Current ");
+    lcdShowMessage("Receive Current");
     displaySerialSend("CURRENT", response, 10);
   } else if (action == 'X') {  // 回転情報取得
-    // STX + ポンプNo + RPM(6桁整数) + CS + ETX の形式で送信
-    char response[11];
-    response[0] = 0x02;  // STX
-    response[1] = pumpNo + '0';  // ポンプ番号
-    
     // RPMを6桁で整形
-    int rpm = calculateRPM(pumpNo - 1); // ポンプ番号に対応するセンサーのRPMを計算
+    int rpm = calculateRPM(pumpNo - 1);
     char rpmStr[7];
-    sprintf(rpmStr, "%06d", rpm); // 6桁固定で左側を0埋め
+    sprintf(rpmStr, "%06d", rpm);
     
-    // RPMデータをコピー
-    for (int i = 0; i < 6; i++) {
-      response[2 + i] = rpmStr[i];
-    }
+    byte response[10];
+    buildResponse(response, pumpNo, rpmStr);
     
-    // チェックサム計算（1-7バイト目: ポンプ番号1バイト + RPM6バイト）
-    byte checksum = 0;
-    for (int i = 1; i <= 7; i++) {
-      checksum ^= response[i];
-    }
-    response[8] = checksum;
-    
-    response[9] = 0x03;  // ETX
-    
-    response[10] = 0x00;  // null
     // 応答を送信
     Serial.write(response, 10);
     
@@ -1682,47 +1621,26 @@ void processCommand(byte* cmd) {
     lcdPrint(rpm);
   } else if (action == 'o') {  // バルブ開く
     openValve(pumpNo);
-    // LCD表示
-    lcdClear();
-    lcdPrint("Valve Open");
+    lcdShowMessage("Valve Open");
   } else if (action == 'q') {  // バルブ閉じる
     closeValve(pumpNo);
-    // LCD表示
-    lcdClear();
-    lcdPrint("Valve Close");
+    lcdShowMessage("Valve Close");
   } else if (action == 'Q') {  // 全バルブ閉じる
     closeAllValves();
-    // LCD表示
-    lcdClear();
-    lcdPrint("All Valves Close");
+    lcdShowMessage("All Valves Close");
   } else if (action == 'G') {  // バルブ状態取得
     bool valveState = getValveState(pumpNo);
-    // STX + ポンプNo + 状態(1桁: 0=Close, 1=Open) + データ(5桁) + CS + ETX の形式で送信
-    char response[11];
-    response[0] = 0x02;  // STX
-    response[1] = pumpNo + '0';  // ポンプ番号
-    response[2] = valveState ? '1' : '0';  // バルブ状態
-    response[3] = '0';  // データ1
-    response[4] = '0';  // データ2
-    response[5] = '0';  // データ3
-    response[6] = '0';  // データ4
-    response[7] = '0';  // データ5
+    char stateStr[7];
+    sprintf(stateStr, "%c00000", valveState ? '1' : '0');
     
-    // チェックサム計算（1-7バイト目）
-    byte checksum = 0;
-    for (int i = 1; i <= 7; i++) {
-      checksum ^= response[i];
-    }
-    response[8] = checksum;
-    
-    response[9] = 0x03;  // ETX
+    byte response[10];
+    buildResponse(response, pumpNo, stateStr);
     
     // 応答を送信
     Serial.write(response, 10);
     
     // LCD表示
-    lcdClear();
-    lcdPrint("Valve Status");
+    lcdShowMessage("Valve Status");
     displaySerialSend("VALVE", response, 10);
   } else if (action == 'W') {  // グローバル速度設定（全モータ共通、停止中のみ）
     // すべてのモータが停止中かチェック
@@ -1777,31 +1695,15 @@ void processCommand(byte* cmd) {
       lcdPrint(speedStr);
     }
   } else if (action == 'T') {  // 累積回転数取得（16進数）
-    // STX + ポンプNo + 回転数(6桁16進数) + CS + ETX の形式で送信
-    char response[11];
-    response[0] = 0x02;  // STX
-    response[1] = pumpNo + '0';  // ポンプ番号
-    
     // 累積ステップ数を回転数に変換（16進数で最大化）
     unsigned long revolutions = stepsToRevolutionsHex(pumpNo - 1);
     
-    // 6桁16進数で整形（FFFFFFまで表現可能 = 16,777,215回転）
+    // 6桁16進数で整形
     char hexStr[7];
-    sprintf(hexStr, "%06lX", revolutions); // 6桁固定で左側を0埋め、大文字16進数
+    sprintf(hexStr, "%06lX", revolutions);
     
-    // 回転数データをコピー
-    for (int i = 0; i < 6; i++) {
-      response[2 + i] = hexStr[i];
-    }
-    
-    // チェックサム計算（1-7バイト目: ポンプ番号1バイト + 回転数6バイト）
-    byte checksum = 0;
-    for (int i = 1; i <= 7; i++) {
-      checksum ^= response[i];
-    }
-    response[8] = checksum;
-    
-    response[9] = 0x03;  // ETX
+    byte response[10];
+    buildResponse(response, pumpNo, hexStr);
     
     // 応答を送信
     Serial.write(response, 10);
@@ -1887,12 +1789,9 @@ void processCommand(byte* cmd) {
     saveStepsToEEPROM(idx);
     
     // LCD表示
-    lcdClear();
-    lcdPrint("Total Reset");
-    lcdSetCursor(0, 1);
     char resetMsg[17];
     sprintf(resetMsg, "Pump%d", idx + 1);
-    lcdPrint(resetMsg);
+    lcdShowMessage("Total Reset", resetMsg);
   } else if (action == 'J') {  // 制御状態取得（全ポンプ）
     // 全ポンプの状態を返すため、ポンプ番号は無視
     char response[11];
@@ -1944,9 +1843,7 @@ void processCommand(byte* cmd) {
     // 応答を送信
     Serial.write(response, 10);
     
-    // LCD表示
-    lcdClear();
-    lcdPrint("Control Status");
+    lcdShowMessage("Control Status");
     displaySerialSend("STATUS", response, 10);
   }
 }
@@ -2055,9 +1952,7 @@ void loop() {
     leakDetected = true;
     leakDetectionTime = millis();
     stopAllPumps();
-    // 必要ならLCDやシリアル通知を追加可能
-    lcdClear();
-    lcdPrint("LEAK STOP");
+    lcdShowMessage("LEAK STOP");
     
     // 漏液発生コマンドをシリアル送信【廃止】
     // 漏液情報はJコマンドの応答でのみ送信するため、自発的な送信は廃止
