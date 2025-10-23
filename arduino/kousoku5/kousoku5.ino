@@ -53,6 +53,15 @@ const int MICRO_STEP_1_4 = 4; // 1/4ステップ
 const int MICRO_STEP_1_8 = 8; // 1/8ステップ
 const int stepsPerRev = 200 * MICRO_STEP_1_2; // 1回転あたりのマイクロステップ数
 
+// ==== 定数定義 ====
+const float ACCEL_DECEL_RATE_SPS = 4.0f;  // 加速・減速レート [steps/s per step]
+const unsigned long STEP_CYCLE_MAX = 400; // ステップサイクルカウンタの最大値（1回転）
+const unsigned long STOP_ALIGNMENT_STEPS = 800; // 停止位置調整用ステップ数（2回転）
+const int COMMAND_BUFFER_SIZE = 11;       // シリアル通信コマンドバッファサイズ
+const int RESPONSE_DATA_SIZE = 6;         // 応答データ部のサイズ（6桁）
+const int LEAK_DETECTION_THRESHOLD = 5;   // 漏液検知しきい値（500ms = 5 × 100ms）
+const int LEAK_RECOVERY_THRESHOLD = 50;   // 漏液復帰しきい値（5000ms = 50 × 100ms）
+
 // ==== グローバル速度設定 ====
 volatile long globalSpeedRpm = 200; // 全モータ共通の目標速度（デフォルト200rpm、最大300rpm）
 
@@ -91,15 +100,6 @@ volatile float targetSpeedSps[3]  = {0.0f, 0.0f, 0.0f}; // 目標速度 [steps/s
 volatile float accelerationSps2[3] = {4000.0f, 4000.0f, 4000.0f}; // 加速度 [steps/s^2]
 const float minStartSpeedSps = 650.0f; // 立ち上がり開始速度（初速）[steps/s]
 const float targetRampTimeSec = 0.2f;  // 初速から目標速度までの到達時間 [s]
-
-// ==== 加速・減速定数 ====
-const float ACCEL_DECEL_RATE_SPS = 4.0f;  // 加速・減速レート [steps/s per step]
-const unsigned long STEP_CYCLE_MAX = 400; // ステップサイクルカウンタの最大値（1回転）
-const unsigned long STOP_ALIGNMENT_STEPS = 800; // 停止位置調整用ステップ数（2回転）
-const int COMMAND_BUFFER_SIZE = 11;       // シリアル通信コマンドバッファサイズ
-const int RESPONSE_DATA_SIZE = 6;         // 応答データ部のサイズ（6桁）
-const int LEAK_DETECTION_THRESHOLD = 5;   // 漏液検知しきい値（500ms = 5 × 100ms）
-const int LEAK_RECOVERY_THRESHOLD = 50;   // 漏液復帰しきい値（5000ms = 50 × 100ms）
 
 // ==== 停止時の減速制御 ====
 volatile bool stopRequested[3] = {false, false, false}; // 停止要求フラグ
