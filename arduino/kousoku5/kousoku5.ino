@@ -412,12 +412,6 @@ void openValve(int valveNumber) {
   if (valveNumber >= 1 && valveNumber <= 3) {
     int idx = valveNumber - 1; // 配列インデックス（0-2）
     digitalWrite(valvePins[idx], HIGH);
-    //Serial.print("バルブ");
-    //Serial.print(valveNumber);
-    //Serial.println("を開きました（ON）");
-  } else {
-    //Serial.print("無効なバルブ番号: ");
-    //Serial.println(valveNumber);
   }
 }
 
@@ -426,12 +420,6 @@ void closeValve(int valveNumber) {
   if (valveNumber >= 1 && valveNumber <= 3) {
     int idx = valveNumber - 1; // 配列インデックス（0-2）
     digitalWrite(valvePins[idx], LOW);
-    //Serial.print("バルブ");
-    //Serial.print(valveNumber);
-    //Serial.println("を閉じました（OFF）");
-  } else {
-    //Serial.print("無効なバルブ番号: ");
-    //Serial.println(valveNumber);
   }
 }
 
@@ -443,7 +431,6 @@ void closeAllValves() {
       digitalWrite(valvePins[i], LOW);
     }
   }
-  //Serial.println("全バルブを閉じました（OFF）");
 }
 
 // バルブの状態を取得
@@ -677,43 +664,7 @@ void lcdPrint(float num, int decimals) {
 
 // LCD表示更新（システム状態表示）
 void lcdUpdateDisplay() {
-  static unsigned long lastUpdate = 0;
-  unsigned long currentTime = millis();
-  
-  //lcdPrint("TEST");
-  /*
-  // 500msごとに更新
-  if (currentTime - lastUpdate < 500) return;
-  lastUpdate = currentTime;
-  
-  // 1行目：システム状態とモータ情報
-  lcdSetCursor(0, 0);
-  int activeMotors = 0;
-  for (int i = 0; i < 3; i++) {
-    if (motorEnabled[i]) activeMotors++;
-  }
-  sprintf(lcdLine1, "M:%d/3 %s", activeMotors, 
-    (motorEnabled[0] || motorEnabled[1] || motorEnabled[2]) ? "RUN" : "STOP");
-  lcdPrint(lcdLine1);
-  
-  // 2行目：モータ速度とRPM情報
-  lcdSetCursor(0, 1);
-  if (activeMotors > 0) {
-    // 動作中のモータの速度とRPMを表示
-    for (int i = 0; i < 3; i++) {
-      if (motorEnabled[i]) {
-        int rpm = calculateRPM(i);
-        sprintf(lcdLine2, "M%d:%drpm", i+1, rpm);
-        lcdPrint(lcdLine2);
-        break; // 最初の動作中モータのみ表示
-      }
-    }
-  } else {
-    // 停止中の場合
-    sprintf(lcdLine2, "System Ready");
-    lcdPrint(lcdLine2);
-  }
-  */
+  // 現在は未使用（必要に応じて実装）
 }
 
 // ===================== RPM→Interval変換 =====================
@@ -1170,23 +1121,6 @@ ISR(TIMER1_COMPA_vect) {
   // 1秒カウンターの更新（1000msごと）
   if (msCounter % 1000 == 0) {
     oneSecondCounter++;
-    
-    // 5秒ごとに回転情報をシリアル出力（デバッグ用）
-    if (oneSecondCounter % 5 == 0) 
-    {
-  //    for (int i = 0; i < 3; i++) {
-  //      int rpm = calculateRPM(i);
-  //      Serial.print("Sensor");
-  //      Serial.print(i+1);
-  //      Serial.print(": Rot=");
-  //      Serial.print(rotationTimeMs[i]);
-  //      Serial.print("ms, RPM=");
-  //      Serial.print(rpm);
-  //      Serial.print("  ");
-  //
-  //      Serial.print(calculateRPM(0));
-  //      Serial.println();
-    }
   }
 
   // Valve遅延処理（毎ミリ秒実行）
@@ -1782,12 +1716,6 @@ void processCommand(byte* cmd) {
     
     // 応答を送信
     Serial.write(response, 10);
-    
-    // LCD表示
-    //lcdClear();
-    //lcdPrint("Status Check");
-    //lcdSetCursor(0, 1);
-    //lcdPrint(leakDetected ? "LEAK DETECTED" : "NORMAL");
   } else if (action == 'I') {  // トータル回転数リセット
     // 割り込み禁止にして、totalSteps を0にリセット（安全性確保）
     noInterrupts();
@@ -1940,18 +1868,7 @@ void loop() {
       commandIndex = 0;
     }
   }
-/*  
-  //Test Valve - 1秒おきにバルブ1を開閉
-  static unsigned long lastValveToggle = 0;
-  if (millis() - lastValveToggle >= 1000) {
-    lastValveToggle = millis();
-    if (getValveState(1)){
-      closeValve(1);
-    } else {
-      openValve(1);
-    }
-  }
-*/
+
   // LCD表示更新
   lcdUpdateDisplay();
 
@@ -1962,10 +1879,6 @@ void loop() {
     leakDetectionTime = millis();
     stopAllPumps();
     lcdShowMessage("LEAK STOP");
-    
-    // 漏液発生コマンドをシリアル送信【廃止】
-    // 漏液情報はJコマンドの応答でのみ送信するため、自発的な送信は廃止
-    // sendLeakDetectionCommand();
   }
   
   // 漏液検知状態の自動復帰処理
