@@ -90,8 +90,8 @@ IS_WINDOWS = platform.system() == "Windows"
 
 # シリアル通信設定（ハイセラポンプ制御用）
 if IS_WINDOWS:
-    SERIAL_PORT_1 = "COM20"  # Windows環境の場合（ハイセラポンプ1-3用）
-    SERIAL_PORT_2 = "COM18"  # Windows環境の場合（ハイセラポンプ4-6用）
+    SERIAL_PORT_1 = "COM18"  # Windows環境の場合（ハイセラポンプ1-3用）
+    SERIAL_PORT_2 = "COM20"  # Windows環境の場合（ハイセラポンプ4-6用）
 else:
     SERIAL_PORT_1 = "/dev/ttyACM0"  # Linux/Raspberry Pi環境の場合（ハイセラポンプ1-3用）
     SERIAL_PORT_2 = "/dev/ttyACM1"  # Linux/Raspberry Pi環境の場合（ハイセラポンプ4-6用）
@@ -1942,8 +1942,8 @@ if __name__ == '__main__':
     parser.add_argument('--host', type=str, default='0.0.0.0', help='ホストアドレス（デフォルト: 0.0.0.0）')
     parser.add_argument('--use-ffmpeg', action='store_true', help='FFmpegストリーミングを使用（デフォルト: MJPEG）')
     # OSに応じたデフォルトポート設定
-    default_port_1 = 'COM20' if IS_WINDOWS else '/dev/ttyACM0'
-    default_port_2 = 'COM18' if IS_WINDOWS else '/dev/ttyACM1'
+    default_port_1 = 'COM18' if IS_WINDOWS else '/dev/ttyACM0'
+    default_port_2 = 'COM20' if IS_WINDOWS else '/dev/ttyACM1'
     default_syringe_port = 'COM4' if IS_WINDOWS else '/dev/ttyUSB0'
     
     parser.add_argument('--serial-port-1', type=str, default=default_port_1, 
