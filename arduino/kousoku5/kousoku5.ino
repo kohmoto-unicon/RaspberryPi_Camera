@@ -5,7 +5,6 @@
 
 // デバッグLEDピン設定
 const int debugLedPin = 52;
-volatile unsigned int intCounter1 = 0; // 割込みカウンター
 
 // 外部割り込みピン設定
 const int extInterruptPins[3] = {18, 19, 20}; // INT3, INT2, INT1
@@ -18,10 +17,6 @@ const int lcdD5 = 5;    // D5 (Data bit 5
 const int lcdD6 = 6;    // D6 (Data bit 6)
 const int lcdD7 = 7;    // D7 (Data bit 7)
 // RWはGNDに接続（ソフト制御なし）
-
-// LCD表示用バッファ
-char lcdLine1[17];  // 1行目（16文字 + 終端）
-char lcdLine2[17];  // 2行目（16文字 + 終端）
 
 // ==== タイマー1による1ms処理用 ====
 volatile unsigned long msCounter = 0; // ミリ秒カウンター
@@ -109,14 +104,6 @@ volatile unsigned int stepCounter[3] = {0, 0, 0}; // 1-400の範囲でカウン�
 volatile float stopCommandSpeedRpm[3] = {0.0f, 0.0f, 0.0f}; // S受信時の速度(rpm)を保持
 volatile unsigned long stepsToStop[3] = {0, 0, 0}; // 停止までのステップ数（800 - stepCounter）
 volatile bool maintainConstantSpeed[3] = {false, false, false}; // 一定速度維持フラグ
-
-// ==== 台形加速事前計算配列 ====
-#define MAX_TRAPEZOID_STEPS 600   // 最大ステップ数（200rpm、0.2秒立ち上げ用）
-volatile unsigned int precomputedIntervals[3][MAX_TRAPEZOID_STEPS]; // 事前計算されたインターバル配列
-volatile unsigned int precomputedStepCount[3] = {0, 0, 0}; // 各モータの事前計算ステップ数
-volatile unsigned int precomputedIndex[3] = {0, 0, 0}; // 現在の配列インデックス
-volatile bool usePrecomputed[3] = {false, false, false}; // 事前計算配列使用フラグ
-volatile bool precomputedInitialized = false; // 起動時初期化フラグ
 
 // ==== STEPピン用ポートポインタとマスク ====
 volatile uint8_t *stepPorts[3];
@@ -293,10 +280,6 @@ void processValveDelays() {
               accelerationSps2[i] = dv / targetRampTimeSec;
               if (accelerationSps2[i] < 1.0f) accelerationSps2[i] = 1.0f;
             }
-            
-            // 事前計算配列は使用しない（新仕様では1ステップ4rpm加速を使用）
-            usePrecomputed[i] = false;
-            precomputedIndex[i] = 0;
             
             stepInterval[i] = spsToIntervalUs(currentSpeedSps[i]);
             switch(i) {
@@ -752,31 +735,6 @@ void lcdUpdateDisplay() {
   */
 }
 
-// 詳細情報表示（コマンド受信時などに使用）
-void lcdShowDetailedInfo() {
-  // 1行目：ポンプ状態
-  lcdSetCursor(0, 0);
-  sprintf(lcdLine1, "P1:%s P2:%s P3:%s",
-    getPumpStateString(0),
-    getPumpStateString(1),
-    getPumpStateString(2));
-  lcdPrint(lcdLine1);
-  
-  // 2行目：RPM情報
-  lcdSetCursor(0, 1);
-  sprintf(lcdLine2, "RPM:%d,%d,%d",
-    calculateRPM(0), calculateRPM(1), calculateRPM(2));
-  lcdPrint(lcdLine2);
-}
-
-// エラーメッセージ表示
-void lcdShowError(const char* errorMsg) {
-  lcdSetCursor(0, 0);
-  lcdPrint("ERROR:");
-  lcdSetCursor(0, 1);
-  lcdPrint(errorMsg);
-}
-
 // ===================== RPM→Interval変換 =====================
 unsigned int rpmToIntervalUs(long rpm) {
   if (rpm <= 0) return 0;
@@ -1010,51 +968,7 @@ inline void updateTimerOCR(int idx) {
   SREG = sreg; // 割り込みレジスタを復元
 }
 
-// ===================== 台形加速初期化 =====================
-// シンプルな台形加速用の初期化
-// 毎ステップ4steps/sずつ速度を増やす方式
-void initializeTrapezoidArrays() {
-  // 配列方式は使わず、毎ステップの速度計算で対応するためここでは何もしない
-  // 実際の加速は handleStep() 内で currentSpeedSps を更新することで実現
-  precomputedInitialized = true;
-}
-
-// 台形加速の有効化（起動時配列を使用）
-void enableTrapezoidForMotor(int idx, unsigned long trapezoidStepCount) {
-  if (idx < 0 || idx >= 3) return;
-  if (trapezoidStepCount == 0 || trapezoidStepCount > MAX_TRAPEZOID_STEPS) {
-    usePrecomputed[idx] = false;
-    return;
-  }
-  
-  // 事前計算配列が初期化されているかチェック
-  if (!precomputedInitialized) {
-    usePrecomputed[idx] = false;
-    return;
-  }
-  
-  // 起動時配列を使用
-  usePrecomputed[idx] = true;
-  precomputedIndex[idx] = 0;
-  
-  // 計画情報を更新（planActiveが既に設定されている場合は上書きしない）
-  if (!planActive[idx]) {
-    planActive[idx] = true;
-    planTotalSteps[idx] = trapezoidStepCount;
-    planStepsDone[idx] = 0;
-  }
-}
-
-// 事前計算配列をリセットする関数
-void resetPrecomputedArray(int idx) {
-  if (idx < 0 || idx >= 3) return;
-  
-  usePrecomputed[idx] = false;
-  precomputedStepCount[idx] = 0;
-  precomputedIndex[idx] = 0;
-}
-
-// 台形加減速処理を分離（制御精度を保持した軽量化版）
+// ===================== 台形加減速処理を分離（制御精度を保持した軽量化版）
 inline void updateTrapezoidSpeed(int idx) {
   // 初回動作時の整合性チェック（早期リターンで処理軽減）
   if (currentSpeedSps[idx] < 1.0f) {
@@ -1166,7 +1080,7 @@ ISR(INT2_vect) {
 // 外部割り込み3 (ポート18) のハンドラ
 ISR(INT3_vect) {
   extInterruptCounter[0]++;  // 外部割り込みカウンタを増加
-  intCounter1++;
+  
   // 1回転にかかった時間を計測
   unsigned long currentTimeMs = msCounter;
   if (lastInterruptTimeMs[0] > 0) {
@@ -1174,7 +1088,6 @@ ISR(INT3_vect) {
     rotationTimeMs[0] = currentTimeMs - lastInterruptTimeMs[0];
   }
   lastInterruptTimeMs[0] = currentTimeMs;
-  
 }
 
 // RPM計算用の関数（整数型に変更）
@@ -1466,10 +1379,6 @@ void processCommand(byte* cmd) {
           if (accelerationSps2[idx] < 1.0f) accelerationSps2[idx] = 1.0f;
         }
         
-        // 事前計算配列は使用しない（新仕様では1ステップ4rpm加速を使用）
-        usePrecomputed[idx] = false;
-        precomputedIndex[idx] = 0;
-        
         stepInterval[idx] = spsToIntervalUs(currentSpeedSps[idx]);
         switch(idx) {
           case 0: setupTimer3(stepInterval[0]); break;
@@ -1664,11 +1573,6 @@ void processCommand(byte* cmd) {
       }
       planActive[idx] = false;
       planStepsDone[idx] = 0;
-      usePrecomputed[idx] = false; // 事前計算配列を無効化
-    } else {
-      // 台形加速ON時：事前計算配列は使用せず、動的な事前計画のみを使用
-      // （Mコマンドで事前計画が設定される）
-      usePrecomputed[idx] = false;
     }
     // LCD表示
     lcdClear();
@@ -1845,10 +1749,6 @@ void processCommand(byte* cmd) {
       
       // グローバル速度を更新
       globalSpeedRpm = newSpeed;
-      
-      // グローバル速度が変更されたため、加速配列を再初期化
-      precomputedInitialized = false;
-      initializeTrapezoidArrays();
       
       // 全モータの目標速度を更新
       for (int i = 0; i < 3; i++) {
@@ -2101,9 +2001,6 @@ void setup() {
   
   // 1msタイマーの設定
   setupTimer1ForMillisecond();
-  
-  // 台形加速配列の初期化（起動時に1回だけ）
-  initializeTrapezoidArrays();
   
   // EEPROMから累積ステップ数を読み込み
   for (int i = 0; i < 3; i++) {
