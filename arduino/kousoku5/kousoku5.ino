@@ -64,7 +64,7 @@ volatile bool fixedStepCompleted[3] = {false, false, false}; // 固定ステッ�
 volatile uint8_t trapezoidCalcCounter[3] = {0, 0, 0}; // 加減速計算の間引きカウンター（4回に1回実行）
 
 // ==== シリアル通信用バッファ ====
-byte commandBuffer[11]; // コマンドバッファ
+byte commandBuffer[COMMAND_BUFFER_SIZE]; // コマンドバッファ
 int commandIndex = 0;   // バッファのインデックス
 
 volatile bool stepHigh[3] = {false, false, false};
@@ -92,6 +92,15 @@ volatile float accelerationSps2[3] = {4000.0f, 4000.0f, 4000.0f}; // 加速度 [
 const float minStartSpeedSps = 650.0f; // 立ち上がり開始速度（初速）[steps/s]
 const float targetRampTimeSec = 0.2f;  // 初速から目標速度までの到達時間 [s]
 
+// ==== 加速・減速定数 ====
+const float ACCEL_DECEL_RATE_SPS = 4.0f;  // 加速・減速レート [steps/s per step]
+const unsigned long STEP_CYCLE_MAX = 400; // ステップサイクルカウンタの最大値（1回転）
+const unsigned long STOP_ALIGNMENT_STEPS = 800; // 停止位置調整用ステップ数（2回転）
+const int COMMAND_BUFFER_SIZE = 11;       // シリアル通信コマンドバッファサイズ
+const int RESPONSE_DATA_SIZE = 6;         // 応答データ部のサイズ（6桁）
+const int LEAK_DETECTION_THRESHOLD = 5;   // 漏液検知しきい値（500ms = 5 × 100ms）
+const int LEAK_RECOVERY_THRESHOLD = 50;   // 漏液復帰しきい値（5000ms = 50 × 100ms）
+
 // ==== 停止時の減速制御 ====
 volatile bool stopRequested[3] = {false, false, false}; // 停止要求フラグ
 volatile unsigned long decelStepsRequired[3] = {0, 0, 0}; // 減速に必要なステップ数
@@ -100,9 +109,9 @@ volatile bool isDecelerating[3] = {false, false, false}; // 減速中フラグ
 volatile unsigned long currentRunSteps[3] = {0, 0, 0}; // 現在の動作での一時的なステップカウンター（Sコマンド用）
 
 // ==== 新仕様: 400ステップサイクルカウンタと停止制御 ====
-volatile unsigned int stepCounter[3] = {0, 0, 0}; // 1-400の範囲でカウント（401→1にリセット）
+volatile unsigned int stepCounter[3] = {0, 0, 0}; // 1-STEP_CYCLE_MAXの範囲でカウント（401→1にリセット）
 volatile float stopCommandSpeedRpm[3] = {0.0f, 0.0f, 0.0f}; // S受信時の速度(rpm)を保持
-volatile unsigned long stepsToStop[3] = {0, 0, 0}; // 停止までのステップ数（800 - stepCounter）
+volatile unsigned long stepsToStop[3] = {0, 0, 0}; // 停止までのステップ数（STOP_ALIGNMENT_STEPS - stepCounter）
 volatile bool maintainConstantSpeed[3] = {false, false, false}; // 一定速度維持フラグ
 
 // ==== STEPピン用ポートポインタとマスク ====
@@ -462,7 +471,7 @@ void buildResponse(byte* response, byte pumpNo, const char* data6) {
   response[1] = pumpNo + '0';  // ポンプ番号
   
   // データ6桁をコピー
-  for (int i = 0; i < 6; i++) {
+  for (int i = 0; i < RESPONSE_DATA_SIZE; i++) {
     response[2 + i] = data6[i];
   }
   
@@ -818,10 +827,10 @@ inline void handleStep(int idx) {
       
       // 固定回転時：残りステップがわずかになったら減速開始をトリガー
       if (useTrapezoid[idx] && remainingSteps[idx] > 0 && !stopRequested[idx] && !isDecelerating[idx]) {
-        // 減速に必要なステップ数を計算（毎ステップ4steps/s減速）
+        // 減速に必要なステップ数を計算（毎ステップACCEL_DECEL_RATE_SPS減速）
         float currentSpeed = currentSpeedSps[idx];
         if (currentSpeed < minStartSpeedSps) currentSpeed = minStartSpeedSps;
-        float decelStepsF = (currentSpeed - minStartSpeedSps) / 4.0f;
+        float decelStepsF = (currentSpeed - minStartSpeedSps) / ACCEL_DECEL_RATE_SPS;
         unsigned long decelSteps = (unsigned long)(decelStepsF + 0.5f);
         if (decelSteps < 1) decelSteps = 1;
         
@@ -856,10 +865,10 @@ inline void handleStep(int idx) {
           }
         }
         
-        // 減速中の場合：1ステップごとに4 steps/s（steps per second）減速
+        // 減速中の場合：1ステップごとにACCEL_DECEL_RATE_SPS減速
         if (isDecelerating[idx]) {
           // 現在速度をsteps/sベースで減少させる
-          currentSpeedSps[idx] -= 4.0f; // 4 steps/s per step
+          currentSpeedSps[idx] -= ACCEL_DECEL_RATE_SPS;
           if (currentSpeedSps[idx] < minStartSpeedSps) {
             currentSpeedSps[idx] = minStartSpeedSps; // 最小速度650 steps/sで維持
           }
@@ -873,9 +882,9 @@ inline void handleStep(int idx) {
 
           // 加速フェーズ
           if (s < accelEnd) {
-            // 1ステップごとに4 steps/s加速
+            // 1ステップごとにACCEL_DECEL_RATE_SPS加速
             if (currentSpeedSps[idx] < planPeakSpeedSps[idx]) {
-              currentSpeedSps[idx] += 4.0f;
+              currentSpeedSps[idx] += ACCEL_DECEL_RATE_SPS;
               if (currentSpeedSps[idx] > planPeakSpeedSps[idx]) currentSpeedSps[idx] = planPeakSpeedSps[idx];
             }
           }
@@ -886,7 +895,7 @@ inline void handleStep(int idx) {
           // 減速フェーズ
           else {
             if (currentSpeedSps[idx] > minStartSpeedSps) {
-              currentSpeedSps[idx] -= 4.0f; // 1ステップごとに4 steps/s減速
+              currentSpeedSps[idx] -= ACCEL_DECEL_RATE_SPS;
               if (currentSpeedSps[idx] < minStartSpeedSps) currentSpeedSps[idx] = minStartSpeedSps;
             }
           }
@@ -897,9 +906,9 @@ inline void handleStep(int idx) {
             // 最初から定速（目標速度で動作）
             currentSpeedSps[idx] = targetSpeed;
           } else {
-            // 650steps/sから開始して、1ステップごとに4 steps/sずつ加速
+            // 650steps/sから開始して、1ステップごとにACCEL_DECEL_RATE_SPSずつ加速
             if (currentSpeedSps[idx] < targetSpeed) {
-              currentSpeedSps[idx] += 4.0f; // 増分は steps/s
+              currentSpeedSps[idx] += ACCEL_DECEL_RATE_SPS;
               if (currentSpeedSps[idx] > targetSpeed) currentSpeedSps[idx] = targetSpeed;
             } else {
               currentSpeedSps[idx] = targetSpeed;
@@ -923,9 +932,9 @@ inline void handleStep(int idx) {
     totalSteps[idx]++;  // 永続的な累積ステップ数（回転数表示用）
     currentRunSteps[idx]++;  // 現在の動作での一時カウンター（Sコマンド用）
     
-    // 新仕様: 400ステップサイクルカウンタの更新（1〜400の範囲、401→1）
+    // 新仕様: ステップサイクルカウンタの更新（1〜STEP_CYCLE_MAXの範囲、STEP_CYCLE_MAX+1→1）
     stepCounter[idx]++;
-    if (stepCounter[idx] > 400) {
+    if (stepCounter[idx] > STEP_CYCLE_MAX) {
       stepCounter[idx] = 1;
     }
     
@@ -1192,7 +1201,7 @@ ISR(TIMER1_COMPA_vect) {
       // 漏液検知状態でない場合のみ、新しい漏液を検知
       if (leakOn) {
         if (leakConsecutiveOnCount < 255) leakConsecutiveOnCount++;
-        if (leakConsecutiveOnCount >= 5) {
+        if (leakConsecutiveOnCount >= LEAK_DETECTION_THRESHOLD) {
           leakStopRequested = true; // 500ms間連続でON → 停止要求
         }
       } else {
@@ -1423,16 +1432,16 @@ void processCommand(byte* cmd) {
     }
   } else if (action == 'S') {  // 停止
     // 【新仕様】停止コマンド受信時の減速処理
-    // 1. stepCounter(1-400)と現在速度(rpm)を読み取る
-    // 2. "減速に必要なステップ数" = (現在速度rpm - 650) / 4 + 1 (整数演算)
-    // 3. "停止までのステップ数" = 800 - stepCounter
+    // 1. stepCounter(1-STEP_CYCLE_MAX)と現在速度(rpm)を読み取る
+    // 2. "減速に必要なステップ数" = (現在速度 - minStartSpeedSps) / ACCEL_DECEL_RATE_SPS
+    // 3. "停止までのステップ数" = STOP_ALIGNMENT_STEPS - stepCounter
     // 4. "停止までのステップ数" - "減速に必要なステップ数" の間は現在速度で一定速度動作（加速を打ち切り）
-    // 5. 両者が等しくなったら減速開始、1ステップごとに4rpm減速
+    // 5. 両者が等しくなったら減速開始、1ステップごとにACCEL_DECEL_RATE_SPS減速
     
     // モーターが動作中の場合
     if (motorEnabled[idx]) {
       noInterrupts();
-      unsigned int currentStepCount = stepCounter[idx];  // 1-400の範囲のカウンタ
+      unsigned int currentStepCount = stepCounter[idx];  // 1-STEP_CYCLE_MAXの範囲のカウンタ
       float currentSpeedSps_local = currentSpeedSps[idx]; // 現在速度 steps/s
       interrupts();
       
@@ -1440,8 +1449,8 @@ void processCommand(byte* cmd) {
   // 必要に応じてrpm換算も取得するが、減速計算は steps/s ベースで行う
   long currentSpeedRpm = (long)((currentSpeedSps_local * 60.0f) / (float)stepsPerRev + 0.5f);
       
-      // "停止までのステップ数" = 800 - stepCounter
-      long stepsToStopVal = 800 - currentStepCount;
+      // "停止までのステップ数" = STOP_ALIGNMENT_STEPS - stepCounter
+      long stepsToStopVal = STOP_ALIGNMENT_STEPS - currentStepCount;
       if (stepsToStopVal < 0) stepsToStopVal = 0; // 安全対策
       
   // 【減速不要処理】現在速度が650 steps/s 以下または非常に近い場合
@@ -1464,9 +1473,9 @@ void processCommand(byte* cmd) {
         isDecelerating[idx] = false; // 減速しない
       } else {
   // 【通常の減速処理】現在速度が650 steps/sより高い場合
-  // "減速に必要なステップ数" = ceil((現在速度_steps/s - 650_steps/s) / 4_steps/s_per_step)
+  // "減速に必要なステップ数" = ceil((現在速度_steps/s - minStartSpeedSps) / ACCEL_DECEL_RATE_SPS)
   float diff = currentSpeedSps_local - minStartSpeedSps;
-  long decelSteps = (long)ceilf(diff / 4.0f);
+  long decelSteps = (long)ceilf(diff / ACCEL_DECEL_RATE_SPS);
   if (decelSteps < 1) decelSteps = 1;
         
         // 停止要求フラグと減速パラメータを設定
@@ -1926,7 +1935,7 @@ void loop() {
     byte b = Serial.read();
     if (commandIndex == 0 && b != 0x02) return;
     commandBuffer[commandIndex++] = b;
-    if (commandIndex >= 11) {
+    if (commandIndex >= COMMAND_BUFFER_SIZE) {
       processCommand(commandBuffer);
       commandIndex = 0;
     }
@@ -1966,7 +1975,7 @@ void loop() {
     // 5秒経過したかチェック
     if (currentTime - leakDetectionTime >= LEAK_RECOVERY_TIME_MS) {
       // 5秒間連続して漏液していない場合、自動復帰
-      if (leakConsecutiveOffCount >= 50) { // 5秒 = 50回 × 100ms
+      if (leakConsecutiveOffCount >= LEAK_RECOVERY_THRESHOLD) {
         leakDetected = false;
         leakConsecutiveOffCount = 0;
         lcdClear();
