@@ -1742,7 +1742,7 @@ void processCommand(byte* cmd) {
     lcdPrint("Receive Current ");
     displaySerialSend("CURRENT", response, 10);
   } else if (action == 'X') {  // 回転情報取得
-    // STX + ポンプNo + RPM(6桁整数) + ETX + CS の形式で送信
+    // STX + ポンプNo + RPM(6桁整数) + CS + ETX の形式で送信
     char response[11];
     response[0] = 0x02;  // STX
     response[1] = pumpNo + '0';  // ポンプ番号

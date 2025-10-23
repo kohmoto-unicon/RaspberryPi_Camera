@@ -8,7 +8,7 @@
 # ログ出力制御設定
 # ========================================
 # 通信ログを出力する場合はTrueに、出力しない場合はFalseに設定
-DEBUG_SERIAL_LOG = False       # シリアル通信の送受信ログ
+DEBUG_SERIAL_LOG = True       # シリアル通信の送受信ログ
 DEBUG_LEAK_LOG = True         # 漏液検出のログ
 DEBUG_SYSTEM_LOG = True       # システム初期化・状態のログ
 DEBUG_STREAM_LOG = False      # ストリーミング関連のログ（通常はFalse推奨）
