@@ -561,10 +561,10 @@
           <label>漏液チェック（回転数取得）:</label>
           <div class="input-group">
             <label class="switch">
-              <input type="checkbox" id="leakCheckSwitch" onchange="toggleLeakCheck(this.checked)" checked>
+              <input type="checkbox" id="leakCheckSwitch" onchange="toggleLeakCheck(this.checked)">
               <span class="slider"></span>
             </label>
-            <span class="direction-label" id="leakCheckLabel">ON</span>
+            <span class="direction-label" id="leakCheckLabel">OFF</span>
           </div>
         </div>
       </div>
@@ -1112,7 +1112,7 @@
     let autoSendingTimeout = null;
     
     // 漏液チェック（状態確認）のON/OFF管理
-    let leakCheckEnabled = true;
+    let leakCheckEnabled = false;
     let autoLeakCheckInterval = null;
     
     // 自動送信状態の表示を更新
@@ -1172,7 +1172,7 @@
       console.log('[DEBUG] 自動送信状態をリセットしました');
     }
     
-    // 漏液状態を確認（Zコマンド）
+    // 漏液状態を確認（Jコマンド）
     async function checkLeakStatus() {
       // 漏液チェックが無効の場合はスキップ
       if (!leakCheckEnabled) {
@@ -1181,7 +1181,7 @@
       }
       
       try {
-        console.log('Zコマンド（状態確認）を実行中...', new Date().toLocaleTimeString());
+        console.log('Jコマンド（状態確認）を実行中...', new Date().toLocaleTimeString());
         
         // 状態確認コマンドを送信
         const response = await fetch('/api/check_leak_status');
@@ -1194,9 +1194,15 @@
         
         if (data.success) {
           console.log('状態確認完了:', data.message, '- 漏液:', data.leak_detected);
+          console.log('ポンプ回転速度:', `P1=${data.rpm_pump1}rpm, P2=${data.rpm_pump2}rpm, P3=${data.rpm_pump3}rpm`);
           
           // 漏液状態に応じてUIを更新
           updateLeakDetectionUI(data.leak_detected);
+          
+          // 回転速度をUIに表示
+          if (data.rpm_pump1 !== undefined) updateRpmDisplay(1, data.rpm_pump1);
+          if (data.rpm_pump2 !== undefined) updateRpmDisplay(2, data.rpm_pump2);
+          if (data.rpm_pump3 !== undefined) updateRpmDisplay(3, data.rpm_pump3);
         } else {
           console.log('状態確認エラー:', data.message);
         }
@@ -1868,12 +1874,12 @@
       isAutoSending = false;
       updateAutoSendingStatus();
       
-      // 漏液チェック状態を復元（デフォルトはON）
+      // 漏液チェック状態を復元（デフォルトはOFF）
       const savedLeakCheckState = localStorage.getItem('leak_check_enabled');
       if (savedLeakCheckState !== null) {
         leakCheckEnabled = savedLeakCheckState === 'true';
       } else {
-        leakCheckEnabled = true; // 初期値はON
+        leakCheckEnabled = false; // 初期値はOFF
       }
       
       // スイッチの状態を復元

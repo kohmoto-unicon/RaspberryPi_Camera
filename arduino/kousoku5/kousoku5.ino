@@ -1913,33 +1913,54 @@ void processCommand(byte* cmd) {
     lcdPrint("HEX: ");
     lcdPrint(hexStr);
     displaySerialSend("TOTAL", response, 10);
-  } else if (action == 'J') {  // 状態確認コマンド（漏液チェック）
+  } else if (action == 'J') {  // 状態確認コマンド（漏液チェック＋回転速度）
     // Python側から送信される状態確認コマンド: STX/0/j/000000/CS/ETX
-    // Arduino側の応答: STX/J/00000X/CS/ETX
-    // bit0 = 漏液フラグ（1=漏液、0=正常）
+    // Arduino側の応答: STX/J/XXXXXX/CS/ETX (バイナリデータ)
+    // X桁目の内訳（各バイトはバイナリ値）:
+    //   1桁目: 漏液フラグ（0=正常、1=漏液）
+    //   2桁目: ポンプ1の回転速度エンコード値（0-255）
+    //   3桁目: ポンプ2の回転速度エンコード値（0-255）
+    //   4桁目: ポンプ3の回転速度エンコード値（0-255）
+    //   5,6桁目: 未使用（0）
+    //   エンコード方式: 0-4=特殊(0-4*10), 5以上=値+45=rpm
     
-    char response[11];
+    byte response[11];
     response[0] = 0x02;  // STX
     response[1] = 'J';   // ポンプ番号位置に'J'を設定（状態確認応答の識別）
     
-    // 漏液検出状態をbit 0に設定
-    byte statusValue = 0;
+    // 漏液検出状態をバイナリで設定
+    byte statusByte = 0;
     if (leakDetected) {
-      statusValue = 0x01;  // bit 0 = 1（漏液検出）
+      statusByte = 0x01;  // 1=漏液検出
     } else {
-      statusValue = 0x00;  // bit 0 = 0（正常）
+      statusByte = 0x00;  // 0=正常
     }
     
-    // 6桁の値として設定（先頭5桁は0、最後の1桁が状態）
-    char statusStr[7];
-    sprintf(statusStr, "%06d", statusValue);  // "000000" または "000001"
+    // 1桁目: 漏液フラグ（バイナリ）
+    response[2] = statusByte;
     
-    // ステータスデータをコピー
-    for (int i = 0; i < 6; i++) {
-      response[2 + i] = statusStr[i];
+    // 2-4桁目: ポンプ1-3の回転速度（バイナリ値）
+    for (int i = 0; i < 3; i++) {
+      int rpm = calculateRPM(i);  // ポンプ0-2のRPMを取得
+      byte rpmEncoded;
+      
+      if (rpm < 50) {
+        // 0～49 rpm → 値 0-4
+        rpmEncoded = rpm / 10;
+      } else {
+        // 50～300 rpm → 値 5-255
+        rpmEncoded = rpm - 45;
+      }
+      
+      // バイナリ値をそのまま設定
+      response[3 + i] = rpmEncoded;
     }
     
-    // チェックサム計算（1-7バイト目: 'J' + ステータス6桁）
+    // 5-6桁目: 未使用（0）
+    response[6] = 0x00;
+    response[7] = 0x00;
+    
+    // チェックサム計算（1-7バイト目: 'J' + ステータス6バイト）
     byte checksum = 0;
     for (int i = 1; i <= 7; i++) {
       checksum ^= response[i];
@@ -1952,10 +1973,10 @@ void processCommand(byte* cmd) {
     Serial.write(response, 10);
     
     // LCD表示
-    lcdClear();
-    lcdPrint("Status Check");
-    lcdSetCursor(0, 1);
-    lcdPrint(leakDetected ? "LEAK DETECTED" : "NORMAL");
+    //lcdClear();
+    //lcdPrint("Status Check");
+    //lcdSetCursor(0, 1);
+    //lcdPrint(leakDetected ? "LEAK DETECTED" : "NORMAL");
   } else if (action == 'I') {  // トータル回転数リセット
     // 割り込み禁止にして、totalSteps を0にリセット（安全性確保）
     noInterrupts();

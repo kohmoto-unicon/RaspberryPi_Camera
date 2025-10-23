@@ -257,6 +257,33 @@ def calc_checksum(data_bytes):
         checksum ^= b
     return checksum
 
+def decode_rpm_from_status_byte(encoded_value):
+    """
+    Jコマンド応答の回転速度バイト値をRPMに変換
+    
+    値が0,1,2,3,4の場合: RPM = 値 * 10 (0, 10, 20, 30, 40)
+    値が5以上の場合: RPM = 値 + 45
+    
+    例:
+      0 → 0 rpm
+      1 → 10 rpm
+      2 → 20 rpm
+      3 → 30 rpm
+      4 → 40 rpm
+      5 → 50 rpm (5 + 45)
+      6 → 51 rpm (6 + 45)
+      ...
+      255 → 300 rpm (255 + 45)
+    """
+    try:
+        value = int(encoded_value)
+        if value <= 4:
+            return value * 10
+        else:
+            return value + 45
+    except (ValueError, TypeError):
+        return 0
+
 def send_serial_command(pump_no, action, value="000000"):
     """シリアルコマンドを送信"""
     if (pump_no < 4) and (not serial_initialized1):
@@ -1691,66 +1718,77 @@ def api_check_leak_status():
                 checksum ^= response[i]
             
             if checksum == response[8]:
-                # ステータス値を解析（2-7バイト目の6桁の数値）
-                status_str = response[2:8].decode('ascii', errors='ignore')
+                # ステータス値を解析（バイナリデータとして直接処理）
+                # response[2]: 漏液フラグ（0=正常、1=漏液）
+                # response[3-5]: ポンプ1-3の回転速度エンコード値
+                # response[6-7]: 未使用
+                
+                leak_detected_status = (response[2] & 0x01) != 0  # bit 0 をチェック
+                
+                # グローバルの漏液検出状態を更新
+                global leak_detected
+                with leak_detection_lock:
+                    leak_detected = leak_detected_status
+                
+                if DEBUG_LEAK_LOG:
+                    print(f"[LEAK CHECK] Jコマンド応答から漏液状態を更新: {leak_detected_status}")
+                
+                # 回転速度を解析（バイナリバイト値から直接取得）
+                rpm_pump1 = 0
+                rpm_pump2 = 0
+                rpm_pump3 = 0
+                
                 try:
-                    # 6桁の数値をint変換、bit 0で漏液判定
-                    status_value = int(status_str)
-                    leak_detected_status = (status_value & 0x01) != 0  # bit 0 をチェック
-                    
-                    # グローバルの漏液検出状態を更新
-                    global leak_detected
-                    with leak_detection_lock:
-                        leak_detected = leak_detected_status
+                    # response[3-5]から直接バイト値を取得
+                    rpm_pump1 = decode_rpm_from_status_byte(response[3])
+                    rpm_pump2 = decode_rpm_from_status_byte(response[4])
+                    rpm_pump3 = decode_rpm_from_status_byte(response[5])
                     
                     if DEBUG_LEAK_LOG:
-                        print(f"[LEAK CHECK] Jコマンド応答から漏液状態を更新: {leak_detected_status}")
+                        print(f"[LEAK CHECK] ポンプ回転速度: P1={rpm_pump1}rpm, P2={rpm_pump2}rpm, P3={rpm_pump3}rpm")
+                        print(f"[LEAK CHECK] ポンプ回転速度（エンコード値）: P1={response[3]}, P2={response[4]}, P3={response[5]}")
+                except Exception as e:
+                    print(f"[ERROR] RPM解析エラー: {e}")
+                
+                # 漏液が検出されたかつポート2が有効な場合、ポンプ4～6を緊急停止
+                if leak_detected_status and serial_initialized2:
+                    if DEBUG_LEAK_LOG:
+                        print(f"[LEAK CHECK] 漏液検出！ポンプ4～6の緊急停止コマンド（Zコマンド）を送信中...")
                     
-                    # 漏液が検出されたかつポート2が有効な場合、ポンプ4～6を緊急停止
-                    if leak_detected_status and serial_initialized2:
-                        if DEBUG_LEAK_LOG:
-                            print(f"[LEAK CHECK] 漏液検出！ポンプ4～6の緊急停止コマンド（Zコマンド）を送信中...")
-                        
-                        # Zコマンド（緊急停止）を生成
-                        z_cmd = bytearray(11)
-                        z_cmd[0] = 0x02
-                        z_cmd[1] = ord('0')  # ポンプ番号
-                        z_cmd[2] = ord('Z')  # 緊急停止コマンド
-                        for i, c in enumerate("000000"):
-                            z_cmd[3 + i] = ord(c)
-                        z_cmd[9] = calc_checksum(z_cmd)
-                        z_cmd[10] = 0x03
-                        
-                        # ポート2の古いバッファをクリア
-                        if ser_2.in_waiting > 0:
-                            old_data = ser_2.read(ser_2.in_waiting)
-                            if DEBUG_SERIAL_LOG:
-                                print(f"[ACM1({SERIAL_PORT_2})] 古いバッファデータをクリア: {old_data.hex()} ({len(old_data)} bytes)")
-                        
-                        # Zコマンドを送信
-                        try:
-                            ser_2.write(z_cmd)
-                            if DEBUG_SERIAL_LOG:
-                                hex_str = ' '.join([f'{b:02X}' for b in z_cmd])
-                                print(f"[ACM1({SERIAL_PORT_2})] 緊急停止コマンド送信: {hex_str}")
-                        except Exception as e:
-                            print(f"[ERROR] ポート2への緊急停止コマンド送信に失敗: {e}")
+                    # Zコマンド（緊急停止）を生成
+                    z_cmd = bytearray(11)
+                    z_cmd[0] = 0x02
+                    z_cmd[1] = ord('0')  # ポンプ番号
+                    z_cmd[2] = ord('Z')  # 緊急停止コマンド
+                    for i, c in enumerate("000000"):
+                        z_cmd[3 + i] = ord(c)
+                    z_cmd[9] = calc_checksum(z_cmd)
+                    z_cmd[10] = 0x03
                     
-                    return jsonify({
-                        'success': True,
-                        'leak_detected': leak_detected_status,
-                        'status_value': status_value,
-                        'status_str': status_str,
-                        'message': '状態確認完了 - ' + ('漏液検出' if leak_detected_status else '正常'),
-                        'command_bytes': list(cmd)
-                    })
-                except ValueError:
-                    return jsonify({
-                        'success': False,
-                        'leak_detected': False,
-                        'message': f'ステータスデータ解析エラー: {status_str}',
-                        'command_bytes': list(cmd)
-                    })
+                    # ポート2の古いバッファをクリア
+                    if ser_2.in_waiting > 0:
+                        old_data = ser_2.read(ser_2.in_waiting)
+                        if DEBUG_SERIAL_LOG:
+                            print(f"[ACM1({SERIAL_PORT_2})] 古いバッファデータをクリア: {old_data.hex()} ({len(old_data)} bytes)")
+                    
+                    # Zコマンドを送信
+                    try:
+                        ser_2.write(z_cmd)
+                        if DEBUG_SERIAL_LOG:
+                            hex_str = ' '.join([f'{b:02X}' for b in z_cmd])
+                            print(f"[ACM1({SERIAL_PORT_2})] 緊急停止コマンド送信: {hex_str}")
+                    except Exception as e:
+                        print(f"[ERROR] ポート2への緊急停止コマンド送信に失敗: {e}")
+                
+                return jsonify({
+                    'success': True,
+                    'leak_detected': leak_detected_status,
+                    'rpm_pump1': rpm_pump1,
+                    'rpm_pump2': rpm_pump2,
+                    'rpm_pump3': rpm_pump3,
+                    'message': '状態確認完了 - ' + ('漏液検出' if leak_detected_status else '正常'),
+                    'command_bytes': list(cmd)
+                })
             else:
                 return jsonify({
                     'success': False,
