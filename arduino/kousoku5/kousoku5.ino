@@ -1020,9 +1020,9 @@ void initializeTrapezoidArrays() {
 }
 
 // 台形加速の有効化（起動時配列を使用）
-void enableTrapezoidForMotor(int idx, unsigned long totalSteps) {
+void enableTrapezoidForMotor(int idx, unsigned long trapezoidStepCount) {
   if (idx < 0 || idx >= 3) return;
-  if (totalSteps == 0 || totalSteps > MAX_TRAPEZOID_STEPS) {
+  if (trapezoidStepCount == 0 || trapezoidStepCount > MAX_TRAPEZOID_STEPS) {
     usePrecomputed[idx] = false;
     return;
   }
@@ -1040,7 +1040,7 @@ void enableTrapezoidForMotor(int idx, unsigned long totalSteps) {
   // 計画情報を更新（planActiveが既に設定されている場合は上書きしない）
   if (!planActive[idx]) {
     planActive[idx] = true;
-    planTotalSteps[idx] = totalSteps;
+    planTotalSteps[idx] = trapezoidStepCount;
     planStepsDone[idx] = 0;
   }
 }
