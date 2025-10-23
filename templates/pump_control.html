@@ -1107,43 +1107,13 @@
     }
 
     // 漏液検出状態をチェック
-    async function checkLeakStatus() {
-      // リセット処理中は状態チェックをスキップ
-      if (isResettingLeak) {
-        console.log('リセット処理中のため、漏液状態チェックをスキップします');
-        return;
-      }
-      
-      try {
-        const response = await fetch('/api/status');
-        const data = await response.json();
-        
-        console.log('漏液検出状態確認:', data.leak_detected);
-        
-        if (data.leak_detected !== undefined) {
-          const wasLeakDetected = window.leakDetected;
-          window.leakDetected = data.leak_detected;
-          
-          if (window.leakDetected !== wasLeakDetected) {
-            console.log('漏液検出状態が変更されました:', wasLeakDetected, '->', window.leakDetected);
-            updateLeakAlert();
-          } else {
-            // 状態が変わらない場合も、表示を同期させる
-            updateLeakAlert();
-          }
-        }
-      } catch (error) {
-        console.error('漏液検出状態確認エラー:', error);
-      }
-    }
-
     // 自動送信状態を管理するフラグ
     let isAutoSending = false;
     let autoSendingTimeout = null;
     
-    // 漏液チェック（回転数取得）のON/OFF管理
+    // 漏液チェック（状態確認）のON/OFF管理
     let leakCheckEnabled = true;
-    let autoRpmInterval = null;
+    let autoLeakCheckInterval = null;
     
     // 自動送信状態の表示を更新
     function updateAutoSendingStatus() {
@@ -1170,18 +1140,18 @@
       
       if (isEnabled) {
         console.log('漏液チェックを有効化します');
-        // インターバルを再開
-        if (autoRpmInterval === null) {
-          autoRpmInterval = setInterval(autoGetRpm, 5000);
-          console.log('自動回転速度取得を再開しました (5秒間隔)');
+        // インターバルを再開（Zコマンドで定期的に状態確認）
+        if (autoLeakCheckInterval === null) {
+          autoLeakCheckInterval = setInterval(checkLeakStatus, 5000);
+          console.log('漏液状態確認を再開しました (5秒間隔)');
         }
       } else {
         console.log('漏液チェックを無効化します');
         // インターバルを停止
-        if (autoRpmInterval !== null) {
-          clearInterval(autoRpmInterval);
-          autoRpmInterval = null;
-          console.log('自動回転速度取得を停止しました');
+        if (autoLeakCheckInterval !== null) {
+          clearInterval(autoLeakCheckInterval);
+          autoLeakCheckInterval = null;
+          console.log('漏液状態確認を停止しました');
         }
       }
       
@@ -1202,37 +1172,19 @@
       console.log('[DEBUG] 自動送信状態をリセットしました');
     }
     
-    // 回転速度取得を自動実行（漏液検出のため）
-    async function autoGetRpm() {
+    // 漏液状態を確認（Zコマンド）
+    async function checkLeakStatus() {
       // 漏液チェックが無効の場合はスキップ
       if (!leakCheckEnabled) {
-        console.log('漏液チェックが無効のため、自動回転速度取得をスキップします');
-        return;
-      }
-      
-      if (isAutoSending) {
-        console.log('自動送信中のため、スキップします');
+        console.log('漏液チェックが無効のため、スキップします');
         return;
       }
       
       try {
-        isAutoSending = true;
-        updateAutoSendingStatus();
+        console.log('Zコマンド（状態確認）を実行中...', new Date().toLocaleTimeString());
         
-        // タイムアウト設定（10秒で強制リセット）
-        if (autoSendingTimeout) {
-          clearTimeout(autoSendingTimeout);
-        }
-        autoSendingTimeout = setTimeout(() => {
-          console.warn('[WARNING] 自動送信がタイムアウトしました。強制リセットします。');
-          isAutoSending = false;
-          updateAutoSendingStatus();
-        }, 10000);
-        
-        console.log('自動回転速度取得を実行中...', new Date().toLocaleTimeString());
-        
-        // ポンプ1の回転速度を取得（漏液検出のため）
-        const response = await fetch('/api/get_rpm?pump=1');
+        // 状態確認コマンドを送信
+        const response = await fetch('/api/check_leak_status');
         
         if (!response.ok) {
           throw new Error(`HTTP error! status: ${response.status}`);
@@ -1241,22 +1193,15 @@
         const data = await response.json();
         
         if (data.success) {
-          console.log('自動回転速度取得成功:', data.rpm, 'rpm');
+          console.log('状態確認完了:', data.message, '- 漏液:', data.leak_detected);
           
-          // 画面のRPM表示を更新
-          updateRpmDisplay(1, data.rpm);
+          // 漏液状態に応じてUIを更新
+          updateLeakDetectionUI(data.leak_detected);
         } else {
-          console.log('自動回転速度取得結果:', data.message);
+          console.log('状態確認エラー:', data.message);
         }
       } catch (error) {
-        console.error('自動回転速度取得エラー:', error);
-      } finally {
-        isAutoSending = false;
-        if (autoSendingTimeout) {
-          clearTimeout(autoSendingTimeout);
-          autoSendingTimeout = null;
-        }
-        updateAutoSendingStatus();
+        console.error('状態確認エラー:', error);
       }
     }
 
@@ -1286,6 +1231,31 @@
         const allElementsWithValue = document.querySelectorAll('[id*="Value"]');
         console.log(`[DEBUG] Value関連の要素:`, allElementsWithValue);
       }
+    }
+
+    // 漏液検出UI更新関数
+    function updateLeakDetectionUI(leakDetected) {
+      // グローバル変数を更新
+      window.leakDetected = leakDetected;
+      
+      const leakStatusElement = document.getElementById('leakDetectionStatus');
+      
+      if (leakStatusElement) {
+        if (leakDetected) {
+          leakStatusElement.textContent = '【漏液検出】';
+          leakStatusElement.style.color = 'red';
+          leakStatusElement.style.fontWeight = 'bold';
+          console.log('漏液が検出されました');
+        } else {
+          leakStatusElement.textContent = '正常';
+          leakStatusElement.style.color = 'green';
+          leakStatusElement.style.fontWeight = 'normal';
+          console.log('漏液は検出されていません');
+        }
+      }
+      
+      // アラート表示を更新
+      updateLeakAlert();
     }
 
     // トータル回転数をローカルストレージに保存
@@ -1923,15 +1893,15 @@
       // 30秒ごとに状態確認
       setInterval(checkStatus, 30000);
       
-      // 1秒ごとに漏液検出状態を確認
-      setInterval(checkLeakStatus, 1000);
+      // 5秒ごとに漏液検出状態を確認
+      setInterval(checkLeakStatus, 5000);
       
-      // 5秒ごとに自動回転速度取得（漏液検出のため）
+      // 5秒ごとに漏液状態確認（Zコマンド）
       // 漏液チェックがONの場合のみインターバルを開始
       if (leakCheckEnabled) {
-        autoRpmInterval = setInterval(autoGetRpm, 5000);
-        console.log('漏液検出監視が開始されました');
-        console.log('自動回転速度取得（5秒間隔）が開始されました');
+        autoLeakCheckInterval = setInterval(checkLeakStatus, 5000);
+        console.log('漏液状態確認監視が開始されました');
+        console.log('Zコマンド（状態確認）による定期チェック（5秒間隔）が開始されました');
         
         // 初回実行（即座に1回実行）
         setTimeout(autoGetRpm, 1000);

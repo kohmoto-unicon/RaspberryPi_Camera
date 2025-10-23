@@ -1621,6 +1621,128 @@ def api_get_control_status():
             'command_bytes': list(cmd)
         })
 
+@app.route("/api/check_leak_status")
+def api_check_leak_status():
+    """状態確認API（Jコマンド）- 漏液状態を確認"""
+    
+    # 状態確認コマンドを生成
+    value_str = "000000"
+    cmd = bytearray(11)
+    cmd[0] = 0x02
+    cmd[1] = ord('0')  # ポンプ番号（状態確認では無視）
+    cmd[2] = ord("J")  # 状態確認コマンド（小文字）
+    for i, c in enumerate(value_str):
+        cmd[3 + i] = ord(c)
+    cmd[9] = calc_checksum(cmd)
+    cmd[10] = 0x03
+    
+    # シリアルポートがオンラインかチェック
+    if not serial_initialized1:
+        return jsonify({
+            'success': False,
+            'leak_detected': False,
+            'message': 'シリアル通信が初期化されていません',
+            'command_bytes': list(cmd)
+        })
+    
+    # ===== 重要: シリアルバッファをクリア（古いデータを除去） =====
+    target_ser = ser_1
+    port_name = f"ACM0({SERIAL_PORT_1})"
+    
+    if target_ser.in_waiting > 0:
+        old_data = target_ser.read(target_ser.in_waiting)
+        if DEBUG_SERIAL_LOG:
+            print(f"[{port_name}] 古いバッファデータをクリア: {old_data.hex()} ({len(old_data)} bytes)")
+    
+    # 状態確認コマンドを送信（ポート1に送信）
+    success = send_serial_command(1, "J", "000000")
+    
+    if not success:
+        return jsonify({
+            'success': False,
+            'leak_detected': False,
+            'message': '送信失敗',
+            'command_bytes': list(cmd)
+        })
+    
+    # 応答を待機（最大1秒）
+    import time
+    start_time = time.time()
+    response = None
+    
+    if DEBUG_SERIAL_LOG:
+        print(f"[{port_name}] Jコマンド送信完了。応答待機中...")
+    
+    while time.time() - start_time < 1.0:
+        if target_ser.in_waiting >= 10:  # 10バイトの応答を待機
+            response = target_ser.read(10)
+            if DEBUG_SERIAL_LOG:
+                hex_str = ' '.join([f'{b:02X}' for b in response])
+                print(f"[{port_name}] Jコマンド応答受信: {hex_str} ({len(response)} bytes)")
+            break
+        time.sleep(0.01)
+    
+    if response and len(response) == 10:
+        # 状態確認応答の処理（STX + 'J' + ステータス(6桁) + CS + ETX）
+        if response[0] == 0x02 and response[1] == ord('J') and response[9] == 0x03:
+            # チェックサム検証
+            checksum = 0
+            for i in range(1, 8):
+                checksum ^= response[i]
+            
+            if checksum == response[8]:
+                # ステータス値を解析（2-7バイト目の6桁の数値）
+                status_str = response[2:8].decode('ascii', errors='ignore')
+                try:
+                    # 6桁の数値をint変換、bit 0で漏液判定
+                    status_value = int(status_str)
+                    leak_detected_status = (status_value & 0x01) != 0  # bit 0 をチェック
+                    
+                    # グローバルの漏液検出状態を更新
+                    global leak_detected
+                    with leak_detection_lock:
+                        leak_detected = leak_detected_status
+                    
+                    if DEBUG_LEAK_LOG:
+                        print(f"[LEAK CHECK] Jコマンド応答から漏液状態を更新: {leak_detected_status}")
+                    
+                    return jsonify({
+                        'success': True,
+                        'leak_detected': leak_detected_status,
+                        'status_value': status_value,
+                        'status_str': status_str,
+                        'message': '状態確認完了 - ' + ('漏液検出' if leak_detected_status else '正常'),
+                        'command_bytes': list(cmd)
+                    })
+                except ValueError:
+                    return jsonify({
+                        'success': False,
+                        'leak_detected': False,
+                        'message': f'ステータスデータ解析エラー: {status_str}',
+                        'command_bytes': list(cmd)
+                    })
+            else:
+                return jsonify({
+                    'success': False,
+                    'leak_detected': False,
+                    'message': f'チェックサムエラー: 期待値={checksum}, 受信値={response[8]}',
+                    'command_bytes': list(cmd)
+                })
+        else:
+            return jsonify({
+                'success': False,
+                'leak_detected': False,
+                'message': f'応答フォーマットエラー: STX={response[0]:02X}, ポンプ位置={chr(response[1]) if response[1] < 128 else response[1]:02X}, ETX={response[9]:02X}',
+                'command_bytes': list(cmd)
+            })
+    else:
+        return jsonify({
+            'success': False,
+            'leak_detected': False,
+            'message': '応答タイムアウト',
+            'command_bytes': list(cmd)
+        })
+
 @app.route("/api/syringe_pump_control")
 def api_syringe_pump_control():
     """シリンジポンプ制御API"""

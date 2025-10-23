@@ -798,7 +798,7 @@ inline unsigned int spsToIntervalUs(float sps) {
 // ===================== センサ読み出しユーティリティ =====================
 inline bool isLeakDetected(int idx) {
   // INPUT_PULLUPのため、漏液検出時はLOWとする想定
-  return digitalRead(leakSensorPins[idx]) == HIGH;
+  return digitalRead(leakSensorPins[idx]) == LOW;
 }
 
 // ===================== ステップトグル関数 =====================
@@ -1913,6 +1913,49 @@ void processCommand(byte* cmd) {
     lcdPrint("HEX: ");
     lcdPrint(hexStr);
     displaySerialSend("TOTAL", response, 10);
+  } else if (action == 'J') {  // 状態確認コマンド（漏液チェック）
+    // Python側から送信される状態確認コマンド: STX/0/j/000000/CS/ETX
+    // Arduino側の応答: STX/J/00000X/CS/ETX
+    // bit0 = 漏液フラグ（1=漏液、0=正常）
+    
+    char response[11];
+    response[0] = 0x02;  // STX
+    response[1] = 'J';   // ポンプ番号位置に'J'を設定（状態確認応答の識別）
+    
+    // 漏液検出状態をbit 0に設定
+    byte statusValue = 0;
+    if (leakDetected) {
+      statusValue = 0x01;  // bit 0 = 1（漏液検出）
+    } else {
+      statusValue = 0x00;  // bit 0 = 0（正常）
+    }
+    
+    // 6桁の値として設定（先頭5桁は0、最後の1桁が状態）
+    char statusStr[7];
+    sprintf(statusStr, "%06d", statusValue);  // "000000" または "000001"
+    
+    // ステータスデータをコピー
+    for (int i = 0; i < 6; i++) {
+      response[2 + i] = statusStr[i];
+    }
+    
+    // チェックサム計算（1-7バイト目: 'J' + ステータス6桁）
+    byte checksum = 0;
+    for (int i = 1; i <= 7; i++) {
+      checksum ^= response[i];
+    }
+    response[8] = checksum;
+    
+    response[9] = 0x03;  // ETX
+    
+    // 応答を送信
+    Serial.write(response, 10);
+    
+    // LCD表示
+    lcdClear();
+    lcdPrint("Status Check");
+    lcdSetCursor(0, 1);
+    lcdPrint(leakDetected ? "LEAK DETECTED" : "NORMAL");
   } else if (action == 'I') {  // トータル回転数リセット
     // 割り込み禁止にして、totalSteps を0にリセット（安全性確保）
     noInterrupts();
@@ -2098,8 +2141,9 @@ void loop() {
     lcdClear();
     lcdPrint("LEAK STOP");
     
-    // 漏液発生コマンドをシリアル送信
-    sendLeakDetectionCommand();
+    // 漏液発生コマンドをシリアル送信【廃止】
+    // 漏液情報はJコマンドの応答でのみ送信するため、自発的な送信は廃止
+    // sendLeakDetectionCommand();
   }
   
   // 漏液検知状態の自動復帰処理
