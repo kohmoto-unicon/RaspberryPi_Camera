@@ -83,6 +83,27 @@
       margin-bottom: 15px;
     }
 
+    .control-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 15px;
+      margin-bottom: 15px;
+    }
+
+    .control-row .control-group {
+      margin-bottom: 0;
+    }
+
+    .control-row .input-group {
+      max-width: 130px !important;
+      min-width: 130px !important;
+    }
+
+    .control-row .input-group select {
+      max-width: 130px !important;
+      min-width: 130px !important;
+    }
+
     .control-group label {
       display: block;
       margin-bottom: 5px;
@@ -163,18 +184,26 @@
     .choices {
       margin-bottom: 0;
       width: 100%;
-      min-width: 200px;
+      min-width: 0 !important;
+      width: auto !important;
     }
 
     .choices__inner {
-      padding: 8px 12px;
+      padding: 8px 32px 8px 12px !important;
       border: 2px solid #ddd;
       border-radius: 8px;
       font-size: 14px;
-      min-height: auto;
+      min-height: 38px !important;
       background-color: white;
-      width: 100%;
-      min-width: 200px;
+      width: auto !important;
+      min-width: 0 !important;
+      white-space: nowrap !important;
+      overflow: hidden !important;
+      text-overflow: ellipsis !important;
+      box-sizing: border-box !important;
+      line-height: 1.5 !important;
+      display: flex !important;
+      align-items: center !important;
     }
 
     .choices__inner:focus {
@@ -184,8 +213,11 @@
 
     .choices__input {
       font-size: 14px;
-      width: 100%;
-      min-width: 150px;
+      width: auto !important;
+      min-width: 0 !important;
+      white-space: nowrap !important;
+      overflow: hidden !important;
+      text-overflow: ellipsis !important;
     }
 
     .choices__list--dropdown .choices__item--selectable.is-highlighted {
@@ -196,14 +228,108 @@
       border: 2px solid #ddd;
       border-top: none;
       border-radius: 0 0 8px 8px;
-      width: 100%;
-      min-width: 200px;
+      width: auto !important;
+      min-width: 0 !important;
+    }
+
+    /* Force dropdown items to stay on one line */
+    .choices__list--dropdown,
+    .choices__list--dropdown .choices__item,
+    .choices__list--dropdown .choices__item--selectable,
+    .choices__list--dropdown .choices__item--choice {
+      min-width: 130px !important;
+      white-space: nowrap !important;
+      overflow: hidden !important;
+      text-overflow: ellipsis !important;
+    }
+
+    /* Ensure the choices container respects the minimum width */
+    .choices {
+      min-width: 130px !important;
     }
 
     /* ステップ数選択ボックス専用のスタイル */
     .steps-select {
-      width: 100%;
-      min-width: 200px;
+      width: 130px !important;
+      max-width: 130px !important;
+      min-width: 130px !important;
+      white-space: nowrap !important;
+      overflow: hidden !important;
+      text-overflow: ellipsis !important;
+    }
+
+    /* Make native select (steps-select) look like the Choices-styled RPM box */
+    select.steps-select {
+      -webkit-appearance: none !important;
+      -moz-appearance: none !important;
+      appearance: none !important;
+      background-color: white !important;
+      border: 2px solid #ddd !important;
+      border-radius: 8px !important;
+      padding: 8px 32px 8px 12px !important;
+      font-size: 14px !important;
+      box-sizing: border-box !important;
+      cursor: pointer !important;
+      background-image: none !important;
+      height: auto !important;
+      line-height: 1.5 !important;
+      min-height: 38px !important;
+      width: 130px !important;
+      display: inline-block !important;
+      vertical-align: middle !important;
+    }
+    
+    /* Add dropdown arrow using pseudo-element for consistency */
+    select.steps-select {
+      background-image: none !important;
+      position: relative !important;
+    }
+    
+    /* Wrapper for select to add arrow */
+    .control-row .input-group {
+      position: relative !important;
+    }
+    
+    /* Arrow indicator after select */
+    select.steps-select + *::before,
+    .input-group:has(select.steps-select)::after {
+      content: '';
+      position: absolute;
+      right: 14px;
+      top: 50%;
+      transform: translateY(-50%);
+      width: 0;
+      height: 0;
+      border-left: 5px solid transparent;
+      border-right: 5px solid transparent;
+      border-top: 6px solid #333;
+      pointer-events: none;
+      z-index: 1;
+    }
+
+    /* Remove duplicate padding-right rule for choices__inner */
+
+    /* Remove duplicate padding-right rule for choices__inner */
+
+    /* Ensure choices container has relative positioning so dropdown arrow works */
+    .choices {
+      position: relative !important;
+      display: inline-block !important;
+    }
+
+    /* Hide the default Choices.js dropdown arrow/button since we use custom background */
+    .choices[data-type*="select-one"]::after {
+      content: '';
+      position: absolute;
+      right: 14px;
+      top: 50%;
+      transform: translateY(-50%);
+      width: 0;
+      height: 0;
+      border-left: 5px solid transparent;
+      border-right: 5px solid transparent;
+      border-top: 6px solid #333;
+      pointer-events: none;
     }
 
     .btn-group {
@@ -621,73 +747,75 @@
           </div>
           <!-- /励磁常時ONスイッチ -->
 
-          <div class="control-group">
-            <label>ステップ数:</label>
-            <div class="input-group">
-              <select id="steps{{ pump }}" class="steps-select" data-placeholder="ステップ数を選択または入力">
-                <option value="0">0</option>
-                <option value="200">1rot</option>
-                <option value="400">2rot</option>
-                <option value="600">3rot</option>
-                <option value="800">4rot</option>
-                <option value="1000">5rot</option>
-                <option value="2000">10rot</option>
-                <option value="3000">15rot</option>
-                <option value="4000">20rot</option>
-                <option value="5000">25rot</option>
-                <option value="6000">30rot</option>
-                <option value="8000">40rot</option>
-                <option value="10000">50rot</option>
-                <option value="12000">60rot</option>
-                <option value="14000">70rot</option>
-                <option value="16000">80rot</option>
-                <option value="18000">90rot</option>
-                <option value="20000">100rot</option>
-                <option value="30000">150rot</option>
-                <option value="40000">200rot</option>
-                <option value="50000">250rot</option>
-                <option value="60000">300rot</option>
-                <option value="80000">400rot</option>
-                <option value="100000">500rot</option>
-                <option value="200000">1000rot</option>
-                <option value="400000">2000rot</option>
-                <option value="800000">4000rot</option>
-              </select>
+          <!-- ステップ数と速度設定を横並びにするラッパー -->
+          <div class="control-row">
+            <div class="control-group">
+              <label>ステップ数:</label>
+              <div class="input-group">
+                <select id="steps{{ pump }}" class="steps-select" data-placeholder="ステップ数を選択または入力">
+                  <option value="0">0</option>
+                  <option value="200">1rot</option>
+                  <option value="400">2rot</option>
+                  <option value="600">3rot</option>
+                  <option value="800">4rot</option>
+                  <option value="1000">5rot</option>
+                  <option value="2000">10rot</option>
+                  <option value="3000">15rot</option>
+                  <option value="4000">20rot</option>
+                  <option value="5000">25rot</option>
+                  <option value="6000">30rot</option>
+                  <option value="8000">40rot</option>
+                  <option value="10000">50rot</option>
+                  <option value="12000">60rot</option>
+                  <option value="14000">70rot</option>
+                  <option value="16000">80rot</option>
+                  <option value="18000">90rot</option>
+                  <option value="20000">100rot</option>
+                  <option value="30000">150rot</option>
+                  <option value="40000">200rot</option>
+                  <option value="50000">250rot</option>
+                  <option value="60000">300rot</option>
+                  <option value="80000">400rot</option>
+                  <option value="100000">500rot</option>
+                  <option value="200000">1000rot</option>
+                  <option value="400000">2000rot</option>
+                  <option value="800000">4000rot</option>
+                </select>
+              </div>
             </div>
-          </div>
 
-          <div class="control-group">
-            <label>速度設定:</label>
-            <div class="input-group">
-              <select id="rpmSetting{{ pump }}" class="steps-select" data-placeholder="RPMを選択">
-                <option value="50">50 rpm</option>
-                <option value="60">60 rpm</option>
-                <option value="70">70 rpm</option>
-                <option value="80">80 rpm</option>
-                <option value="90">90 rpm</option>
-                <option value="100">100 rpm</option>
-                <option value="110">110 rpm</option>
-                <option value="120">120 rpm</option>
-                <option value="130">130 rpm</option>
-                <option value="140">140 rpm</option>
-                <option value="150">150 rpm</option>
-                <option value="160">160 rpm</option>
-                <option value="170">170 rpm</option>
-                <option value="180">180 rpm</option>
-                <option value="190">190 rpm</option>
-                <option value="200" selected>200 rpm</option>
-                <option value="210">210 rpm</option>
-                <option value="220">220 rpm</option>
-                <option value="230">230 rpm</option>
-                <option value="240">240 rpm</option>
-                <option value="250">250 rpm</option>
-                <option value="260">260 rpm</option>
-                <option value="270">270 rpm</option>
-                <option value="280">280 rpm</option>
-                <option value="290">290 rpm</option>
-                <option value="300">300 rpm</option>
-              </select>
-              <button class="btn btn-info" onclick="setGlobalRPM({{ pump }})">設定</button>
+            <div class="control-group">
+              <label>速度設定:</label>
+              <div class="input-group">
+                <select id="rpmSetting{{ pump }}" class="steps-select" data-placeholder="RPMを選択" onmousedown="startRpmSetting()" onchange="setGlobalRPM({{ pump }})">
+                  <option value="50">50 rpm</option>
+                  <option value="60">60 rpm</option>
+                  <option value="70">70 rpm</option>
+                  <option value="80">80 rpm</option>
+                  <option value="90">90 rpm</option>
+                  <option value="100">100 rpm</option>
+                  <option value="110">110 rpm</option>
+                  <option value="120">120 rpm</option>
+                  <option value="130">130 rpm</option>
+                  <option value="140">140 rpm</option>
+                  <option value="150">150 rpm</option>
+                  <option value="160">160 rpm</option>
+                  <option value="170">170 rpm</option>
+                  <option value="180">180 rpm</option>
+                  <option value="190">190 rpm</option>
+                  <option value="200" selected>200 rpm</option>
+                  <option value="210">210 rpm</option>
+                  <option value="220">220 rpm</option>
+                  <option value="230">230 rpm</option>
+                  <option value="240">240 rpm</option>
+                  <option value="250">250 rpm</option>
+                  <option value="260">260 rpm</option>
+                  <option value="270">270 rpm</option>
+                  <option value="280">280 rpm</option>
+                  <option value="290">290 rpm</option>
+                  <option value="300">300 rpm</option>
+                </select>
+              </div>
             </div>
           </div>
 
@@ -880,24 +1008,40 @@
       
       // 未選択または空の場合
       if (!rpm || rpm === '' || rpm === null || rpm === undefined) {
-        alert('RPMを選択してください');
+        console.log('RPMを選択してください');
+        isRpmSettingInProgress = false;
         return;
       }
       
       // 値の検証：数字として有効かチェック
       const rpmNum = parseInt(rpm, 10);
       if (isNaN(rpmNum) || rpmNum < 50 || rpmNum > 300) {
-        alert('有効なRPM値を選択してください（50～300）');
+        console.log('有効なRPM値を選択してください（50～300）');
+        isRpmSettingInProgress = false;
         return;
       }
       
-      // 'W'コマンドで送信（全モータ共通速度設定）
-      console.log(`グローバル速度設定: ${rpmNum} RPM`);
-      await sendPumpCommand(pump, 'W', rpmNum.toString());
-      
-      // 設定成功後、同じグループの他のポンプのRPM選択も同じ値に同期
-      // （ポンプ1～3は互いに同期、ポンプ4～6も互いに同期）
-      syncRPMSettings(pump, rpm);
+      try {
+        // 'W'コマンドで送信（全モータ共通速度設定）
+        console.log(`グローバル速度設定: ${rpmNum} RPM`);
+        await sendPumpCommand(pump, 'W', rpmNum.toString());
+        
+        // 設定成功後、同じグループの他のポンプのRPM選択も同じ値に同期
+        // （ポンプ1～3は互いに同期、ポンプ4～6も互いに同期）
+        syncRPMSettings(pump, rpm);
+      } finally {
+        // 処理完了後、フラグをリセット（500ms待機してから、通信安定化を待つ）
+        setTimeout(() => {
+          isRpmSettingInProgress = false;
+          console.log('RPM設定処理完了、通信再開を許可しました');
+        }, 500);
+      }
+    }
+    
+    // RPMセレクト操作開始時（マウスダウン時）にフラグを立てる
+    function startRpmSetting() {
+      isRpmSettingInProgress = true;
+      console.log('RPM操作開始、漏液チェックをスキップします');
     }
     
     // RPM設定を他のポンプと同期する関数
@@ -1115,6 +1259,9 @@
     let leakCheckEnabled = false;
     let autoLeakCheckInterval = null;
     
+    // RPM設定中フラグ（通信衝突を避けるため）
+    let isRpmSettingInProgress = false;
+    
     // 自動送信状態の表示を更新
     function updateAutoSendingStatus() {
       const statusElement = document.getElementById('autoSendingStatus');
@@ -1177,6 +1324,12 @@
       // 漏液チェックが無効の場合はスキップ
       if (!leakCheckEnabled) {
         console.log('漏液チェックが無効のため、スキップします');
+        return;
+      }
+      
+      // RPM設定中は漏液チェックをスキップ（通信衝突回避）
+      if (isRpmSettingInProgress) {
+        console.log('RPM設定処理中のため、漏液チェックをスキップします');
         return;
       }
       
@@ -1530,8 +1683,7 @@
             noResultsText: '結果が見つかりません',
             noChoicesText: '選択肢がありません',
             itemSelectText: '',
-            placeholder: true,
-            placeholderValue: 'ステップ数を選択',
+            placeholder: false,
             allowHTML: false,
             shouldSort: false,
             classNames: {
@@ -1568,6 +1720,12 @@
           
           // selectElementにchoicesインスタンスを保存
           selectElement.choices = choices;
+          // 初期表示を0に設定（プレースホルダ表示を無効化して0を選択状態にする）
+          try {
+            choices.setChoiceByValue('0');
+          } catch (e) {
+            console.log('初期値0の設定に失敗しました:', e);
+          }
         }
         
         // RPM設定選択ボックスを初期化
@@ -1900,14 +2058,11 @@
       setInterval(checkStatus, 30000);
       
       // 5秒ごとに漏液検出状態を確認
-      setInterval(checkLeakStatus, 5000);
-      
-      // 5秒ごとに漏液状態確認（Zコマンド）
       // 漏液チェックがONの場合のみインターバルを開始
       if (leakCheckEnabled) {
         autoLeakCheckInterval = setInterval(checkLeakStatus, 5000);
         console.log('漏液状態確認監視が開始されました');
-        console.log('Zコマンド（状態確認）による定期チェック（5秒間隔）が開始されました');
+        console.log('Jコマンド（状態確認）による定期チェック（5秒間隔）が開始されました');
         
         // 初回実行（即座に1回実行）
         setTimeout(autoGetRpm, 1000);
