@@ -96,7 +96,7 @@ else:
     SERIAL_PORT_1 = "/dev/ttyACM0"  # Linux/Raspberry Pi環境の場合（ハイセラポンプ1-3用）
     SERIAL_PORT_2 = "/dev/ttyACM1"  # Linux/Raspberry Pi環境の場合（ハイセラポンプ4-6用）
 
-BAUD_RATE = 9600
+BAUD_RATE = 115200  # シリアル通信のボーレート（ハイセラポンプ用）
 ser_1 = None  # ポンプ1-3用
 ser_2 = None  # ポンプ4-6用
 ser_pump1 = None  # ポンプ1-3用（クリーンアップ用）
@@ -115,7 +115,7 @@ if IS_WINDOWS:
 else:
     SYRINGE_SERIAL_PORT = "/dev/ttyUSB0"  # Linux/Raspberry Pi環境の場合（シリンジポンプ）
 
-SYRINGE_BAUD_RATE = 9600
+SYRINGE_BAUD_RATE = 9600  # シリンジポンプのボーレート
 ser_syringe = None
 syringe_serial_initialized = False
 syringe_pump_controllers = []  # シリンジポンプ制御インスタンスのリスト

@@ -2122,7 +2122,7 @@ void setup() {
   // LCD初期化
   lcdInit();
 
-  Serial.begin(9600);
+  Serial.begin(115200);
 }
 
 // ===================== LOOP =====================
