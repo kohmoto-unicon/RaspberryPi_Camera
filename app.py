@@ -23,7 +23,7 @@ from flask import Flask, render_template, Response, jsonify, request, send_file
 from flask_cors import CORS
 import cv2
 import io
-import serial
+import serial  # pyserial
 from command import SyringePumpController
 
 # Raspberry Pi専用ライブラリのインポート（PCでは利用不可）
