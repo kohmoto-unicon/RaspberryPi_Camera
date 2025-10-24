@@ -2,17 +2,36 @@
 # -*- coding: utf-8 -*-
 """
 カメラ管理クラス
+
+このクラスはカメラの初期化、フレーム取得、ストリーミング生成を管理します。
+Picamera2（Raspberry Pi）とOpenCV（PC/汎用）の両方に対応しています。
+
+主な機能:
+- 自動カメラ検出と初期化
+- ハードウェアJPEGエンコーディング（Picamera2）
+- MJPEGストリーミング生成
+- カメラ設定の動的更新
+- エラーハンドリングとログ出力
 """
 
 import cv2
 import time
 import io
 import threading
+import logging
+from typing import Optional, Tuple, Generator
 from config import (
     CAM_WIDTH, CAM_HEIGHT, CAM_FPS,
     PICAMERA_AVAILABLE, IS_WINDOWS, IS_RASPBERRY_PI,
     DEBUG_STREAM_LOG
 )
+
+# ロガー設定
+logger = logging.getLogger(__name__)
+if DEBUG_STREAM_LOG:
+    logger.setLevel(logging.DEBUG)
+else:
+    logger.setLevel(logging.INFO)
 
 # Raspberry Pi専用ライブラリのインポート
 if PICAMERA_AVAILABLE:
@@ -49,7 +68,21 @@ class _JpegBuffer(io.BufferedIOBase):
 
 
 class CameraManager:
-    """カメラ管理クラス"""
+    """
+    カメラ管理クラス
+    
+    Picamera2とOpenCVの両方をサポートし、カメラの初期化から
+    ストリーミング配信まで一元管理します。
+    
+    Attributes:
+        camera: カメラインスタンス
+        is_initialized: 初期化状態
+        is_raspberry_pi: Raspberry Pi環境かどうか
+        use_picamera: Picamera2を使用するか
+        width: 映像幅
+        height: 映像高さ
+        fps: フレームレート
+    """
     
     def __init__(self):
         """初期化"""
@@ -67,24 +100,58 @@ class CameraManager:
         self.width = CAM_WIDTH
         self.height = CAM_HEIGHT
         self.fps = CAM_FPS
+        
+        # 統計情報
+        self._frame_count = 0
+        self._error_count = 0
+        self._last_error_time = 0
+        
+        logger.info(f"CameraManager初期化: {self.width}x{self.height}@{self.fps}fps")
     
-    def initialize(self):
-        """カメラを初期化"""
+    def initialize(self) -> bool:
+        """
+        カメラを初期化
+        
+        環境に応じてPicamera2またはOpenCVを使用してカメラを初期化します。
+        
+        Returns:
+            bool: 初期化成功時True
+        """
         try:
+            logger.info("カメラ初期化を開始...")
+            
             if self.use_picamera:
-                return self._initialize_picamera()
+                success = self._initialize_picamera()
             else:
-                return self._initialize_opencv()
+                success = self._initialize_opencv()
+            
+            if success:
+                logger.info("✓ カメラ初期化成功")
+                self._reset_statistics()
+            else:
+                logger.error("✗ カメラ初期化失敗")
+            
+            return success
+            
         except Exception as e:
-            print(f"カメラ初期化エラー: {e}")
-            import traceback
-            traceback.print_exc()
+            logger.error(f"カメラ初期化エラー: {e}", exc_info=True)
             self.is_initialized = False
             return False
     
-    def _initialize_picamera(self):
-        """Picamera2を初期化"""
-        print("Picamera2でカメラを初期化中...")
+    def _reset_statistics(self):
+        """統計情報をリセット"""
+        self._frame_count = 0
+        self._error_count = 0
+        self._last_error_time = 0
+    
+    def _initialize_picamera(self) -> bool:
+        """
+        Picamera2を初期化
+        
+        Returns:
+            bool: 初期化成功時True
+        """
+        logger.info("Picamera2でカメラを初期化中...")
         
         # カメラモジュールの状態確認
         try:
@@ -92,28 +159,28 @@ class CameraManager:
             result = subprocess.run(['vcgencmd', 'get_camera'],
                                   capture_output=True, text=True, timeout=5)
             if result.returncode == 0:
-                print(f"カメラモジュール状態: {result.stdout.strip()}")
+                logger.debug(f"カメラモジュール状態: {result.stdout.strip()}")
         except Exception as e:
-            print(f"カメラモジュール状態確認エラー: {e}")
+            logger.warning(f"カメラモジュール状態確認エラー: {e}")
         
         # カメラデバイスの確認
         try:
             import os
             video_devices = [f for f in os.listdir('/dev') if f.startswith('video')]
-            print(f"利用可能なビデオデバイス: {video_devices}")
+            logger.debug(f"利用可能なビデオデバイス: {video_devices}")
         except Exception as e:
-            print(f"ビデオデバイス確認エラー: {e}")
+            logger.warning(f"ビデオデバイス確認エラー: {e}")
         
         self.camera = Picamera2()
         
         # カメラ設定
-        print("カメラ設定を作成中...")
+        logger.info("カメラ設定を作成中...")
         config = self.camera.create_preview_configuration(
             main={"size": (self.width, self.height), "format": "RGB888"},
             encode="main",
             buffer_count=4
         )
-        print("カメラ設定を適用中...")
+        logger.info("カメラ設定を適用中...")
         self.camera.configure(config)
         
         # ハードウェアJPEGエンコーダ準備
@@ -124,9 +191,9 @@ class CameraManager:
             except TypeError:
                 self.jpeg_encoder = JpegEncoder(q=85)
             self.jpeg_output = FileOutput(self.jpeg_buffer)
-            print("ハードウェアJPEGエンコーダを初期化しました")
+            logger.info("ハードウェアJPEGエンコーダを初期化しました")
         except Exception as e:
-            print(f"ハードウェアJPEGエンコーダ初期化失敗: {e}")
+            logger.warning(f"ハードウェアJPEGエンコーダ初期化失敗: {e}")
             self.jpeg_buffer = None
             self.jpeg_encoder = None
             self.jpeg_output = None
@@ -134,11 +201,11 @@ class CameraManager:
         # フレームレート設定
         try:
             self.camera.set_controls({"FrameRate": self.fps})
-            print(f"FrameRate を {self.fps}fps に設定しました")
+            logger.info(f"FrameRate を {self.fps}fps に設定しました")
         except Exception as e:
-            print(f"FrameRate 設定に失敗しました: {e}")
+            logger.warning(f"FrameRate 設定に失敗しました: {e}")
         
-        print("カメラを起動中...")
+        logger.info("カメラを起動中...")
         self.camera.start()
         
         # ハードウェアエンコーダの録画開始
@@ -146,35 +213,40 @@ class CameraManager:
         if self.jpeg_encoder and self.jpeg_output:
             try:
                 self.camera.start_recording(self.jpeg_encoder, self.jpeg_output)
-                print("Picamera2: ハードウェアエンコード録画を開始しました")
+                logger.info("Picamera2: ハードウェアエンコード録画を開始しました")
                 started_hw = True
             except Exception as e:
-                print(f"Picamera2 ハードウェア録画開始エラー: {e}")
+                logger.warning(f"Picamera2 ハードウェア録画開始エラー: {e}")
                 self.jpeg_buffer = None
                 self.jpeg_encoder = None
                 self.jpeg_output = None
         
         self.is_initialized = True
         self.is_raspberry_pi = True
-        print(f"Picamera2 カメラ初期化完了（ハードウェアエンコーダ: {'有効' if started_hw else '無効'}）")
+        logger.info(f"Picamera2 カメラ初期化完了（ハードウェアエンコーダ: {'有効' if started_hw else '無効'}）")
         return True
     
-    def _initialize_opencv(self):
-        """OpenCVでカメラを初期化"""
+    def _initialize_opencv(self) -> bool:
+        """
+        OpenCVでカメラを初期化
+        
+        Returns:
+            bool: 初期化成功時True
+        """
         import platform
         is_raspberry_pi_hardware = platform.system() == "Linux" and "raspberry" in platform.machine().lower()
         
         if is_raspberry_pi_hardware:
-            print("OpenCVでラズパイカメラモジュールを初期化中...")
+            logger.info("OpenCVでラズパイカメラモジュールを初期化中...")
             camera_devices = [0, 10, 11, 12]
         else:
-            print("OpenCVでPCカメラを初期化中...")
+            logger.info("OpenCVでPCカメラを初期化中...")
             camera_devices = [0]
         
         camera_local = None
         for device_id in camera_devices:
             try:
-                print(f"カメラデバイス {device_id} を試行中...")
+                logger.info(f"カメラデバイス {device_id} を試行中...")
                 
                 if IS_WINDOWS:
                     camera_local = cv2.VideoCapture(device_id, cv2.CAP_DSHOW)
@@ -187,30 +259,30 @@ class CameraManager:
                     camera_local.set(cv2.CAP_PROP_FPS, self.fps)
                     
                     actual_fps = camera_local.get(cv2.CAP_PROP_FPS)
-                    print(f"要求FPS={self.fps} -> 実際FPS={actual_fps}")
+                    logger.info(f"要求FPS={self.fps} -> 実際FPS={actual_fps}")
                     
                     ret, test_frame = camera_local.read()
                     if ret and test_frame is not None:
-                        print(f"カメラデバイス {device_id} でテストフレーム取得成功: サイズ={test_frame.shape}")
+                        logger.info(f"カメラデバイス {device_id} でテストフレーム取得成功: サイズ={test_frame.shape}")
                         self.camera = camera_local
                         self.is_raspberry_pi = is_raspberry_pi_hardware
                         self.is_initialized = True
                         camera_type = "ラズパイカメラモジュール" if is_raspberry_pi_hardware else "PCカメラ"
-                        print(f"{camera_type}が正常に初期化されました（デバイスID: {device_id}）")
+                        logger.info(f"{camera_type}が正常に初期化されました（デバイスID: {device_id}）")
                         return True
                     else:
-                        print(f"カメラデバイス {device_id} でテストフレーム取得に失敗")
+                        logger.warning(f"カメラデバイス {device_id} でテストフレーム取得に失敗")
                         camera_local.release()
                         camera_local = None
                 else:
-                    print(f"カメラデバイス {device_id} を開けませんでした")
+                    logger.warning(f"カメラデバイス {device_id} を開けませんでした")
             except Exception as e:
-                print(f"カメラデバイス {device_id} の初期化エラー: {e}")
+                logger.error(f"カメラデバイス {device_id} の初期化エラー: {e}")
                 if camera_local:
                     camera_local.release()
                     camera_local = None
         
-        print("利用可能なカメラデバイスが見つかりませんでした")
+        logger.error("利用可能なカメラデバイスが見つかりませんでした")
         self.is_initialized = False
         return False
     

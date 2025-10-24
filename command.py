@@ -1,50 +1,118 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+レガシーシリンジポンプコントローラー
+
+このモジュールは後方互換性のために保持されています。
+新しいコードではpump_controllers.SyringePumpManagerを使用してください。
+"""
+
 import serial
 import time
+import logging
+from typing import Tuple
+
+# ロガー設定
+logger = logging.getLogger(__name__)
 
 class SyringePumpController:
+    """
+    シリンジポンプコントローラー（レガシー版）
+    
+    単一のシリンジポンプを制御します。
+    pump_controllers.SyringePumpManagerから使用されます。
+    
+    Attributes:
+        pump_number: ポンプ番号
+        serial_port: シリアルポートインスタンス
+        address: ポンプアドレス
+        status: ポンプ状態
+    """
+    
     def __init__(self, pump_number: int, serial_port: serial.Serial):
+        """
+        初期化
+        
+        Args:
+            pump_number: ポンプ番号
+            serial_port: シリアルポートインスタンス
+        """
         self.pump_number = pump_number
         self.serial_port = serial_port
         self.address = 1  # プレースホルダー、pump_numberから派生するか渡す必要があります
         self.status = "Stop"
+        
+        logger.debug(f"SyringePumpController[{pump_number}]初期化")
     
     @staticmethod
     def _format_hex(data: bytes) -> str:
-        """バイトデータを1バイトごとに空白で区切った16進数文字列に変換"""
+        """
+        バイトデータを16進数文字列に変換
+        
+        Args:
+            data: バイトデータ
+            
+        Returns:
+            str: 空白区切りの16進数文字列
+        """
         return ' '.join(f'{b:02x}' for b in data)
         
     def create_command(self, command: str, address: int) -> bytes:
-        """コマンドフレームを作成（チェックサム付き）"""
-        # Frame: STX(0x02) + [ADDR ASCII] + [0x31] + [COMMAND ASCII] + ETX(0x03) + [CS(1byte XOR)]
+        """
+        コマンドフレームを作成（チェックサム付き）
+        
+        フレーム形式:
+        STX(0x02) + [ADDR ASCII] + [0x31] + [COMMAND ASCII] + ETX(0x03) + [CS(1byte XOR)]
+        
+        Args:
+            command: コマンド文字列
+            address: ポンプアドレス
+            
+        Returns:
+            bytes: コマンドフレーム
+        """
         # アドレスは1文字のASCII、その後に0x31、そしてコマンド文字列
         body_bytes = bytes([ord(str(address))]) + bytes([0x31]) + command.encode('ascii')
         frame_without_cs = bytes([0x02]) + body_bytes + bytes([0x03])
+        
         # STXからETXまで含めた全バイトのXORチェックサム
         checksum = 0
         for byte in frame_without_cs:
             checksum ^= byte
+        
         frame = frame_without_cs + bytes([checksum])
         return frame
     
-    def send_command(self, command: str, address: int) -> tuple[bool, bytes, bytes]:
-        """コマンドを送信し、応答を受信"""
+    def send_command(self, command: str, address: int) -> Tuple[bool, bytes, bytes]:
+        """
+        コマンドを送信し、応答を受信
+        
+        Args:
+            command: コマンド文字列
+            address: ポンプアドレス
+            
+        Returns:
+            tuple: (成功フラグ, 送信コマンド, 受信レスポンス)
+        """
         try:
             full_command = self.create_command(command, address)
             self.serial_port.write(full_command)
-            print(f"[Pump {self.pump_number}] 送信: {self._format_hex(full_command)}")
+            logger.debug(f"[Pump {self.pump_number}] 送信: {self._format_hex(full_command)}")
             
             # 応答を受信（タイムアウト付き）
             self.serial_port.timeout = 1.0  # 1秒のタイムアウト
             response = self._read_response()
+            
             if response:
-                print(f"[Pump {self.pump_number}] 受信: {self._format_hex(response)}")
+                logger.debug(f"[Pump {self.pump_number}] 受信: {self._format_hex(response)}")
                 return True, full_command, response
             else:
-                print(f"[Pump {self.pump_number}] 応答なし")
+                logger.warning(f"[Pump {self.pump_number}] 応答なし")
                 return True, full_command, b''
+                
         except Exception as e:
-            print(f"シリンジポンプ送信エラー: {e}")
-            # Always return the command bytes even if serial communication fails
+            logger.error(f"[Pump {self.pump_number}] シリンジポンプ送信エラー: {e}")
+            # 失敗時もコマンドバイトは返す
             full_command = self.create_command(command, address)
             return False, full_command, b''
     
