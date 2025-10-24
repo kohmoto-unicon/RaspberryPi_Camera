@@ -1445,10 +1445,10 @@ void processCommand(byte* cmd) {
     }
   } else if (action == 'F') {  // 正転
     digitalWrite(dirPins[idx], LOW);
-    lcdShowMessage("Receive Forward");
+    lcdShowMessage("Direction", "Seiten");
   } else if (action == 'R') {  // 逆転
     digitalWrite(dirPins[idx], HIGH);
-    lcdShowMessage("Receive Reverse");
+    lcdShowMessage("Direction", "Gyakuten");
   } else if (action == 'V') {  // 速度変更 (rpm)
     if (value > 0) {
       if (useTrapezoid[idx]) {
@@ -1501,13 +1501,18 @@ void processCommand(byte* cmd) {
       planActive[idx] = false;
       planStepsDone[idx] = 0;
     }
-    lcdShowMessage("ReceiveTrapezoid");
+    // 台形加速のON/OFF状態に応じてメッセージを変更
+    if (useTrapezoid[idx]) {
+      lcdShowMessage("Daikei Kasoku", "ON");
+    } else {
+      lcdShowMessage("Daikei Kasoku", "OFF");
+    }
   } else if (action == 'B') {  // バルブ常時Open設定（000000:OFF, 000001:ON）
     if (value == 1) {
       // バルブ常時OpenフラグをONに設定し、ただちにバルブをOPENする
       valveNormallyOpen[idx] = true;
       openValve(pumpNo);
-      lcdShowMessage("Valve Normally Open ON");
+      lcdShowMessage("Valve","Jouji Open");
     } else if (value == 0) {
       // バルブ常時OpenフラグをOFFに設定
       valveNormallyOpen[idx] = false;
@@ -1515,7 +1520,7 @@ void processCommand(byte* cmd) {
       if (!motorEnabled[idx]) {
         closeValve(pumpNo);
       }
-      lcdShowMessage("Valve Normally Open OFF");
+      lcdShowMessage("Valve", "Rendou Shiki");
     }
   } else if (action == 'L') {  // 励磁常時ON設定（000000:OFF, 000001:ON）
     if (value == 1) {
@@ -1523,7 +1528,7 @@ void processCommand(byte* cmd) {
       excitationAlwaysOn[idx] = true;
       digitalWrite(enaPins[idx], LOW);  // 励磁ON
       updatePumpState(idx);
-      lcdShowMessage("Excitation Always ON");
+      lcdShowMessage("Reiji", "Jouji ON");
     } else if (value == 0) {
       // 励磁常時ONフラグをOFFに設定
       excitationAlwaysOn[idx] = false;
@@ -1532,7 +1537,7 @@ void processCommand(byte* cmd) {
         digitalWrite(enaPins[idx], HIGH);  // 励磁OFF
         updatePumpState(idx);
       }
-      lcdShowMessage("Excitation Always OFF");
+      lcdShowMessage("Reiji", "Jouji OFF");
     }
   } else if (action == 'C') {  // 電流データ取得（ダミー応答）
     byte response[10];

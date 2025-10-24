@@ -4,14 +4,16 @@
 ラズパイ公式カメラモジュール ストリーミングWebサーバー + ポンプ制御
 """
 
+import sys
+import argparse
+
 # ========================================
-# ログ出力制御設定
+# ログ出力制御設定（グローバル変数）
 # ========================================
-# 通信ログを出力する場合はTrueに、出力しない場合はFalseに設定
-DEBUG_SERIAL_LOG = True       # シリアル通信の送受信ログ
-DEBUG_LEAK_LOG = True         # 漏液検出のログ
-DEBUG_SYSTEM_LOG = True       # システム初期化・状態のログ
-DEBUG_STREAM_LOG = False      # ストリーミング関連のログ（通常はFalse推奨）
+DEBUG_SYSTEM_LOG = True   # システム初期化ログは常にON
+DEBUG_SERIAL_LOG = False  # シリアル通信ログ（デフォルトOFF）
+DEBUG_LEAK_LOG = False    # 漏液検出ログ（デフォルトOFF）
+DEBUG_STREAM_LOG = False  # ストリーミングログ（デフォルトOFF）
 
 import os
 import time
@@ -2157,7 +2159,28 @@ if __name__ == '__main__':
     signal.signal(signal.SIGTERM, signal_handler)
     
     # コマンドライン引数の解析
-    parser = argparse.ArgumentParser(description='ラズパイカメラストリーミング + ポンプ制御Webサーバー')
+    parser = argparse.ArgumentParser(
+        description='ハイセラポンプ制御システム - ラズパイカメラストリーミング + ポンプ制御Webサーバー',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog='''
+ログ設定の使用例:
+  python app.py                    # すべてのログOFF（システムログのみON）
+  python app.py -log serial        # シリアル通信ログのみON
+  python app.py -log serial leak   # シリアルと漏液検出ログをON
+  python app.py -log all           # すべてのログをON
+        '''
+    )
+    
+    # ログ設定
+    parser.add_argument(
+        '-log',
+        nargs='*',
+        choices=['serial', 'leak', 'stream', 'all'],
+        default=[],
+        help='有効にするログの種類を指定 (serial: シリアル通信, leak: 漏液検出, stream: ストリーミング, all: すべて)'
+    )
+    
+    # サーバー設定
     parser.add_argument('--debug', action='store_true', help='デバッグモードで起動')
     parser.add_argument('--port', type=int, default=5000, help='ポート番号（デフォルト: 5000）')
     parser.add_argument('--host', type=str, default='0.0.0.0', help='ホストアドレス（デフォルト: 0.0.0.0）')
@@ -2175,6 +2198,28 @@ if __name__ == '__main__':
                        help=f'シリンジポンプ用シリアルポート（デフォルト: {default_syringe_port}）')
     
     args = parser.parse_args()
+    
+    # ログ設定を適用
+    if hasattr(args, 'log') and args.log:
+        import __main__
+        if 'all' in args.log:
+            __main__.DEBUG_SERIAL_LOG = True
+            __main__.DEBUG_LEAK_LOG = True
+            __main__.DEBUG_STREAM_LOG = True
+        else:
+            __main__.DEBUG_SERIAL_LOG = 'serial' in args.log
+            __main__.DEBUG_LEAK_LOG = 'leak' in args.log
+            __main__.DEBUG_STREAM_LOG = 'stream' in args.log
+    
+    # 起動時にログ設定を表示
+    if DEBUG_SYSTEM_LOG:
+        print("="*50)
+        print("ログ出力設定:")
+        print(f"  システムログ: ON (常時)")
+        print(f"  シリアル通信ログ: {'ON' if DEBUG_SERIAL_LOG else 'OFF'}")
+        print(f"  漏液検出ログ: {'ON' if DEBUG_LEAK_LOG else 'OFF'}")
+        print(f"  ストリーミングログ: {'ON' if DEBUG_STREAM_LOG else 'OFF'}")
+        print("="*50)
     
     # シリアルポート設定を更新（ハイセラ／シリンジ）
     # コマンドライン引数で指定された場合は上書き
