@@ -72,52 +72,53 @@
         <div class="pump-box">
           <h2>ハイセラポンプ {{ pump }}</h2>
           
-          <div class="control-group">
-            <label>正逆切替:</label>
-            <div class="input-group">
-              <label class="switch">
-                <input type="checkbox" onchange="toggleDirection({{ pump }}, this.checked)">
-                <span class="slider"></span>
-              </label>
-              <span class="direction-label" id="dirLabel{{ pump }}">正転</span>
+          <!-- 正逆切替と台形加速を横並び -->
+          <div class="control-row">
+            <div class="control-group">
+              <label>正逆切替:</label>
+              <div class="input-group">
+                <label class="switch">
+                  <input type="checkbox" onchange="toggleDirection({{ pump }}, this.checked)">
+                  <span class="slider"></span>
+                </label>
+                <span class="direction-label" id="dirLabel{{ pump }}">正転</span>
+              </div>
             </div>
-          </div>
-          <div class="control-group">
-            <label>台形加速:</label>
-            <div class="input-group">
-              <label class="switch">
-                <input type="checkbox" onchange="toggleAccel({{ pump }}, this.checked)">
-                <span class="slider"></span>
-              </label>
-              <span class="direction-label" id="accelLabel{{ pump }}">OFF</span>
+            <div class="control-group">
+              <label>台形加速:</label>
+              <div class="input-group">
+                <label class="switch">
+                  <input type="checkbox" onchange="toggleAccel({{ pump }}, this.checked)">
+                  <span class="slider"></span>
+                </label>
+                <span class="direction-label" id="accelLabel{{ pump }}">OFF</span>
+              </div>
             </div>
           </div>
 
-          <!-- 新しい弁常時Openスイッチ -->
-          <div class="control-group">
-            <label>弁常時Open:</label>
-            <div class="input-group">
-              <label class="switch">
-                <input type="checkbox" onchange="toggleValve({{ pump }}, this.checked)">
-                <span class="slider"></span>
-              </label>
-              <span class="direction-label" id="valveLabel{{ pump }}">OFF</span>
+          <!-- 弁常時OPENと励磁常時ONを横並び -->
+          <div class="control-row">
+            <div class="control-group">
+              <label>弁常時Open:</label>
+              <div class="input-group">
+                <label class="switch">
+                  <input type="checkbox" onchange="toggleValve({{ pump }}, this.checked)">
+                  <span class="slider"></span>
+                </label>
+                <span class="direction-label" id="valveLabel{{ pump }}">OFF</span>
+              </div>
+            </div>
+            <div class="control-group">
+              <label>励磁常時ON:</label>
+              <div class="input-group">
+                <label class="switch">
+                  <input type="checkbox" onchange="toggleExcitation({{ pump }}, this.checked)">
+                  <span class="slider"></span>
+                </label>
+                <span class="direction-label" id="excitationLabel{{ pump }}">OFF</span>
+              </div>
             </div>
           </div>
-          <!-- /新しい弁常時Openスイッチ -->
-
-          <!-- 励磁常時ONスイッチ -->
-          <div class="control-group">
-            <label>励磁常時ON:</label>
-            <div class="input-group">
-              <label class="switch">
-                <input type="checkbox" onchange="toggleExcitation({{ pump }}, this.checked)">
-                <span class="slider"></span>
-              </label>
-              <span class="direction-label" id="excitationLabel{{ pump }}">OFF</span>
-            </div>
-          </div>
-          <!-- /励磁常時ONスイッチ -->
 
           <!-- ステップ数と速度設定を横並びにするラッパー -->
           <div class="control-row">

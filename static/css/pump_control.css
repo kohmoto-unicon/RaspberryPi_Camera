@@ -86,11 +86,7 @@ body {
   margin-bottom: 0;
 }
 
-.control-row .input-group {
-  max-width: 130px !important;
-  min-width: 130px !important;
-}
-
+/* ステップ数・RPMのセレクトボックス用の幅制限 */
 .control-row .input-group select {
   max-width: 130px !important;
   min-width: 130px !important;
@@ -282,34 +278,13 @@ select.steps-select {
   position: relative !important;
 }
 
-/* Arrow indicator after select */
-select.steps-select + *::before,
-.input-group:has(select.steps-select)::after {
-  content: '';
-  position: absolute;
-  right: 14px;
-  top: 50%;
-  transform: translateY(-50%);
-  width: 0;
-  height: 0;
-  border-left: 5px solid transparent;
-  border-right: 5px solid transparent;
-  border-top: 6px solid #333;
-  pointer-events: none;
-  z-index: 1;
-}
-
-/* Remove duplicate padding-right rule for choices__inner */
-
-/* Remove duplicate padding-right rule for choices__inner */
-
 /* Ensure choices container has relative positioning so dropdown arrow works */
 .choices {
   position: relative !important;
   display: inline-block !important;
 }
 
-/* Hide the default Choices.js dropdown arrow/button since we use custom background */
+/* Custom dropdown arrow for Choices.js (RPM設定) */
 .choices[data-type*="select-one"]::after {
   content: '';
   position: absolute;
