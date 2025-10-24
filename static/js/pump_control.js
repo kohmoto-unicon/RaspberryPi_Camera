@@ -629,19 +629,21 @@ async function getTotalRevolutions(pump){
   }
 }
 
-// ブラウザ立ち上げかどうかをチェックする関数
-function isBrowserStartup() {
-  // セッションストレージでページ切り替えかブラウザ立ち上げかを判定
-  const sessionKey = 'pump_control_session_active';
-  const isNewSession = !sessionStorage.getItem(sessionKey);
+// ページが初めて表示されたかどうかをチェックする関数
+// ページを閉じて再度開いた時もtrueを返す（Jコマンドを毎回送信）
+function isPageFirstLoad() {
+  // ページ内でのタブ切り替えのみを検出するためのフラグ
+  const pageLoadKey = 'pump_control_page_load_flag';
+  const isTabSwitch = sessionStorage.getItem(pageLoadKey);
   
-  if (isNewSession) {
-    // 新しいセッションの場合、セッションストレージにマークを設定
-    sessionStorage.setItem(sessionKey, 'true');
-    console.log('新しいブラウザセッションを検出しました');
+  if (!isTabSwitch) {
+    // 初回ロードまたはページを閉じて再度開いた場合
+    sessionStorage.setItem(pageLoadKey, 'loaded');
+    console.log('ページ初回表示: Jコマンドで制御状態を同期します');
     return true;
   } else {
-    console.log('既存のブラウザセッション内でのページ切り替えです');
+    // 同一ページ内でのタブ切り替え（シリンジポンプ→ハイセラポンプなど）
+    console.log('ページ内タブ切り替え: localStorageから制御状態を復元します');
     return false;
   }
 }
@@ -695,6 +697,68 @@ async function loadControlStatus() {
     }
   } catch (error) {
     console.error('制御状態取得エラー:', error);
+  }
+}
+
+// Jコマンドでポンプ制御状態を取得してUIに反映（初回のみ）
+async function loadControlStatusFromJCommand() {
+  console.log('[初回同期] Jコマンドでポンプ制御状態を取得中...');
+  
+  try {
+    const response = await fetch('/api/check_leak_status');
+    const data = await response.json();
+    
+    console.log('[初回同期] Jコマンド取得結果:', data);
+    
+    if (data.success && data.pump_states) {
+      // ポンプ1～3の制御状態をUIに反映
+      for (let pump = 1; pump <= 3; pump++) {
+        const idx = pump - 1;
+        const state = data.pump_states[idx];
+        
+        // 方向切替スイッチ
+        const directionSwitch = document.querySelector(`input[type="checkbox"][onchange*="toggleDirection(${pump}"]`);
+        if (directionSwitch) {
+          directionSwitch.checked = state.direction_ccw;
+          document.getElementById('dirLabel' + pump).innerText = state.direction_ccw ? '逆転' : '正転';
+          saveSwitchState(pump, 'direction', state.direction_ccw);
+          console.log(`[初回同期] ポンプ${pump}の方向: ${state.direction_ccw ? '逆転' : '正転'}`);
+        }
+        
+        // 台形加速スイッチ
+        const accelerationSwitch = document.querySelector(`input[type="checkbox"][onchange*="toggleAccel(${pump}"]`);
+        if (accelerationSwitch) {
+          accelerationSwitch.checked = state.trapezoid;
+          document.getElementById('accelLabel' + pump).innerText = state.trapezoid ? 'ON' : 'OFF';
+          saveSwitchState(pump, 'acceleration', state.trapezoid);
+          console.log(`[初回同期] ポンプ${pump}の台形加速: ${state.trapezoid ? 'ON' : 'OFF'}`);
+        }
+        
+        // バルブ常時Openスイッチ
+        const valveSwitch = document.querySelector(`input[type="checkbox"][onchange*="toggleValve(${pump}"]`);
+        if (valveSwitch) {
+          valveSwitch.checked = state.valve_open;
+          document.getElementById('valveLabel' + pump).innerText = state.valve_open ? 'ON' : 'OFF';
+          saveSwitchState(pump, 'valve', state.valve_open);
+          console.log(`[初回同期] ポンプ${pump}のバルブ常時OPEN: ${state.valve_open ? 'ON' : 'OFF'}`);
+        }
+        
+        // 励磁常時ONスイッチ
+        const excitationSwitch = document.querySelector(`input[type="checkbox"][onchange*="toggleExcitation(${pump}"]`);
+        if (excitationSwitch) {
+          excitationSwitch.checked = state.excitation_on;
+          document.getElementById('excitationLabel' + pump).innerText = state.excitation_on ? 'ON' : 'OFF';
+          saveSwitchState(pump, 'excitation', state.excitation_on);
+          console.log(`[初回同期] ポンプ${pump}の励磁常時ON: ${state.excitation_on ? 'ON' : 'OFF'}`);
+        }
+      }
+      
+      console.log('[初回同期] Jコマンドによる制御状態の反映が完了しました');
+    } else {
+      console.log('[初回同期] Jコマンド取得失敗または状態データなし:', data.message);
+    }
+  } catch (error) {
+    console.error('[初回同期] Jコマンド取得エラー:', error);
   }
 }
 
@@ -1135,32 +1199,28 @@ document.addEventListener('DOMContentLoaded', function() {
   }
   
   // ブラウザ立ち上げかどうかをチェックして、スイッチの状態を処理
-  if (isBrowserStartup()) {
-    console.log('ブラウザ立ち上げのため、スイッチの状態をリセットします');
+  if (isPageFirstLoad()) {
+    console.log('ページ初回表示のため、スイッチの状態をリセットします');
     resetSwitchStates();
     
-    // シリアル通信の状態を確認後、制御状態を取得
-    checkStatus().then(() => {
-      // 状態確認が完了したら、少し待ってから制御状態を取得
-      setTimeout(async () => {
-        // シリアル通信がオンラインの場合のみ制御状態を取得
-        try {
-          const statusResponse = await fetch('/api/status');
-          const statusData = await statusResponse.json();
-          
-          if (statusData.hysera_port1_status || statusData.hysera_port2_status) {
-            console.log('USB通信がオンラインのため、制御状態を取得します');
-            await loadControlStatus();
-          } else {
-            console.log('USB通信がオフラインのため、制御状態取得をスキップします');
-          }
-        } catch (error) {
-          console.error('USB通信状態確認エラー:', error);
+    // 初回のみJコマンドでポンプ制御状態を取得してUIに反映
+    setTimeout(async () => {
+      try {
+        const statusResponse = await fetch('/api/status');
+        const statusData = await statusResponse.json();
+        
+        if (statusData.hysera_port1_status) {
+          console.log('[初回同期] USB通信がオンラインのため、Jコマンドでポンプ制御状態を取得します');
+          await loadControlStatusFromJCommand();
+        } else {
+          console.log('[初回同期] USB通信がオフラインのため、Jコマンド送信をスキップします');
         }
-      }, 500);  // 500ms待機してから制御状態を取得
-    });
+      } catch (error) {
+        console.error('[初回同期] USB通信状態確認エラー:', error);
+      }
+    }, 500);  // 500ms待機してから制御状態を取得
   } else {
-    console.log('ページ切り替えのため、スイッチの状態を復元します');
+    console.log('ページ内タブ切り替えのため、スイッチの状態を復元します（Jコマンドは送信しません）');
     restoreSwitchStates();
   }
   
@@ -1211,6 +1271,13 @@ document.addEventListener('DOMContentLoaded', function() {
   } else {
     console.log('漏液チェックがOFFのため、自動回転速度取得は開始されません');
   }
+  
+  // ページを離脱する時（他のページへ移動、タブを閉じる、ブラウザを閉じる）に
+  // sessionStorageのフラグをクリア
+  window.addEventListener('beforeunload', () => {
+    sessionStorage.removeItem('pump_control_page_load_flag');
+    console.log('ページ離脱: 次回ページ表示時にJコマンドを送信します');
+  });
 });
 
 // トータル回転数リセット（サーバーへ 'I' コマンドを送信）

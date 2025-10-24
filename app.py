@@ -140,6 +140,16 @@ def initialize_serial():
         ser_pump1 = ser_1  # クリーンアップ用にser_pump1にも設定
         if DEBUG_SYSTEM_LOG:
             print(f"✓ ハイセラポンプ1-3用シリアル通信が正常に初期化されました: {SERIAL_PORT_1}")
+            print(f"   Arduino起動待機中（3秒）...")
+        # Arduinoがシリアルポート接続でリセットされるため、起動完了まで待機
+        time.sleep(3.0)
+        # バッファをクリア（起動メッセージなどを破棄）
+        if ser_1.in_waiting > 0:
+            discarded = ser_1.read(ser_1.in_waiting)
+            if DEBUG_SYSTEM_LOG:
+                print(f"   起動時のバッファをクリア: {len(discarded)} bytes")
+        if DEBUG_SYSTEM_LOG:
+            print(f"   Arduino起動完了")
         serial_initialized1 = True
     except Exception as e:
         if DEBUG_SYSTEM_LOG:
@@ -157,6 +167,16 @@ def initialize_serial():
         ser_pump2 = ser_2  # クリーンアップ用にser_pump2にも設定
         if DEBUG_SYSTEM_LOG:
             print(f"✓ ハイセラポンプ4-6用シリアル通信が正常に初期化されました: {SERIAL_PORT_2}")
+            print(f"   Arduino起動待機中（3秒）...")
+        # Arduinoがシリアルポート接続でリセットされるため、起動完了まで待機
+        time.sleep(3.0)
+        # バッファをクリア（起動メッセージなどを破棄）
+        if ser_2.in_waiting > 0:
+            discarded = ser_2.read(ser_2.in_waiting)
+            if DEBUG_SYSTEM_LOG:
+                print(f"   起動時のバッファをクリア: {len(discarded)} bytes")
+        if DEBUG_SYSTEM_LOG:
+            print(f"   Arduino起動完了")
         serial_initialized2 = True
     except Exception as e:
         if DEBUG_SYSTEM_LOG:
@@ -178,6 +198,20 @@ def initialize_syringe_serial():
     
     try:
         ser_syringe = serial.Serial(SYRINGE_SERIAL_PORT, SYRINGE_BAUD_RATE, timeout=1)
+        
+        if DEBUG_SYSTEM_LOG:
+            print(f"✓ シリンジポンプ用シリアル通信が正常に初期化されました: {SYRINGE_SERIAL_PORT}")
+            print(f"   Arduino起動待機中（3秒）...")
+        # Arduinoがシリアルポート接続でリセットされるため、起動完了まで待機
+        time.sleep(3.0)
+        # バッファをクリア（起動メッセージなどを破棄）
+        if ser_syringe.in_waiting > 0:
+            discarded = ser_syringe.read(ser_syringe.in_waiting)
+            if DEBUG_SYSTEM_LOG:
+                print(f"   起動時のバッファをクリア: {len(discarded)} bytes")
+        if DEBUG_SYSTEM_LOG:
+            print(f"   Arduino起動完了")
+        
         syringe_serial_initialized = True
         
         # 6個のポンプ制御インスタンスを作成
@@ -187,7 +221,6 @@ def initialize_syringe_serial():
             syringe_pump_controllers.append(controller)
         
         if DEBUG_SYSTEM_LOG:
-            print(f"✓ シリンジポンプ用シリアル通信が正常に初期化されました: {SYRINGE_SERIAL_PORT}")
             print(f"✓ 6個のポンプ制御インスタンスを作成しました")
         return True
     except Exception as e:
@@ -1801,6 +1834,19 @@ def api_check_leak_status():
                         
                         print(f"  ポンプ{pump_num}: 方向={direction}, 台形加速={trapezoid}, バルブ常時OPEN={valve}, 励磁常時ON={excitation}")
                 
+                # 制御状態を配列に格納（JavaScript側で使用）
+                control_bits_high = response[6]
+                control_bits_low = response[7]
+                
+                pump_states = []
+                for pump_idx in range(3):
+                    pump_states.append({
+                        'direction_ccw': bool(control_bits_high & (1 << pump_idx)),  # True=逆転, False=正転
+                        'trapezoid': bool(control_bits_high & (1 << (pump_idx + 3))),
+                        'valve_open': bool(control_bits_low & (1 << pump_idx)),
+                        'excitation_on': bool(control_bits_low & (1 << (pump_idx + 3)))
+                    })
+                
                 # 漏液が検出されたかつポート2が有効な場合、ポンプ4～6を緊急停止
                 if leak_detected_status and serial_initialized2:
                     if DEBUG_LEAK_LOG:
@@ -1841,6 +1887,7 @@ def api_check_leak_status():
                     'rpm_pump1': rpm_pump1,
                     'rpm_pump2': rpm_pump2,
                     'rpm_pump3': rpm_pump3,
+                    'pump_states': pump_states,  # ポンプ1～3の制御状態
                     'message': '状態確認完了 - ' + ('漏液検出' if leak_detected_status else '正常'),
                     'command_bytes': list(cmd)
                 })
