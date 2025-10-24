@@ -90,13 +90,10 @@ CAM_FPS = 60
 import platform
 IS_WINDOWS = platform.system() == "Windows"
 
-# シリアル通信設定（ハイセラポンプ制御用）
-if IS_WINDOWS:
-    SERIAL_PORT_1 = "COM18"  # Windows環境の場合（ハイセラポンプ1-3用）
-    SERIAL_PORT_2 = "COM20"  # Windows環境の場合（ハイセラポンプ4-6用）
-else:
-    SERIAL_PORT_1 = "/dev/ttyACM0"  # Linux/Raspberry Pi環境の場合（ハイセラポンプ1-3用）
-    SERIAL_PORT_2 = "/dev/ttyACM1"  # Linux/Raspberry Pi環境の場合（ハイセラポンプ4-6用）
+# シリアル通信設定（デフォルト値は parse_arguments() で設定）
+SERIAL_PORT_1 = None  # ハイセラポンプ1-3用（起動時にコマンドライン引数から設定）
+SERIAL_PORT_2 = None  # ハイセラポンプ4-6用（起動時にコマンドライン引数から設定）
+SYRINGE_SERIAL_PORT = None  # シリンジポンプ用（起動時にコマンドライン引数から設定）
 
 BAUD_RATE = 115200  # シリアル通信のボーレート（ハイセラポンプ用）
 ser_1 = None  # ポンプ1-3用
@@ -110,12 +107,6 @@ serial_initialized2 = False # ポンプ4-6用シリアル通信初期化フラ�
 # 漏液検出状態管理
 leak_detected = False  # 漏液検出フラグ
 leak_detection_lock = threading.Lock()  # 漏液検出状態の排他制御用
-
-# シリアル通信設定（シリンジポンプ制御用）
-if IS_WINDOWS:
-    SYRINGE_SERIAL_PORT = "COM4"  # Windows環境の場合（シリンジポンプ）
-else:
-    SYRINGE_SERIAL_PORT = "/dev/ttyUSB0"  # Linux/Raspberry Pi環境の場合（シリンジポンプ）
 
 SYRINGE_BAUD_RATE = 9600  # シリンジポンプのボーレート
 ser_syringe = None
@@ -237,6 +228,9 @@ def check_leak_detection():
     """漏液検出コマンドをチェックする関数（他のシリアル通信と競合しない）"""
     global leak_detected
     
+    if DEBUG_LEAK_LOG:
+        print(f"[LEAK CHECK] check_leak_detection() 開始 - Port1初期化:{serial_initialized1}, Port2初期化:{serial_initialized2}")
+    
     # ポート1のチェック
     if ser_1 and serial_initialized1:
         if ser_1.in_waiting >= 10:
@@ -253,15 +247,46 @@ def check_leak_detection():
                 
                 if checksum == data[8]:
                     if DEBUG_LEAK_LOG:
-                        print(f"[LEAK CHECK] 漏液検出コマンドを受信: {data.hex()}")
+                        print(f"[LEAK CHECK] 漏液検出コマンドを受信（ポート1）: {data.hex()}")
                     with leak_detection_lock:
                         leak_detected = True
                     if DEBUG_LEAK_LOG:
-                        print("漏液検出コマンドを受信しました！")
+                        print("漏液検出コマンドを受信しました（ポート1）！")
+                    
+                    # ポート2が有効な場合、ポンプ4～6を緊急停止
+                    if serial_initialized2 and ser_2.is_open:
+                        if DEBUG_LEAK_LOG:
+                            print(f"[LEAK CHECK] ポンプ4～6の緊急停止コマンド（Zコマンド）を送信中...")
+                        
+                        # Zコマンド（緊急停止）を生成
+                        z_cmd = bytearray(11)
+                        z_cmd[0] = 0x02
+                        z_cmd[1] = ord('0')  # ポンプ番号
+                        z_cmd[2] = ord('Z')  # 緊急停止コマンド
+                        for i, c in enumerate("000000"):
+                            z_cmd[3 + i] = ord(c)
+                        z_cmd[9] = calc_checksum(z_cmd)
+                        z_cmd[10] = 0x03
+                        
+                        try:
+                            # ポート2の古いバッファをクリア
+                            if ser_2.in_waiting > 0:
+                                old_data = ser_2.read(ser_2.in_waiting)
+                            
+                            # Zコマンドを送信
+                            ser_2.write(z_cmd)
+                            if DEBUG_SERIAL_LOG:
+                                hex_str = ' '.join([f'{b:02X}' for b in z_cmd])
+                                print(f"[ACM1({SERIAL_PORT_2})] 緊急停止コマンド送信: {hex_str}")
+                        except Exception as e:
+                            print(f"[ERROR] ポート2への緊急停止コマンド送信に失敗: {e}")
+                    
                     return True
     
     # ポート2のチェック
     if ser_2 and serial_initialized2:
+        if DEBUG_LEAK_LOG:
+            print(f"[LEAK CHECK] ポート2のバッファをチェック中... in_waiting={ser_2.in_waiting}")
         if ser_2.in_waiting >= 10:
             data = ser_2.read(10)
             if DEBUG_LEAK_LOG:
@@ -276,12 +301,44 @@ def check_leak_detection():
                 
                 if checksum == data[8]:
                     if DEBUG_LEAK_LOG:
-                        print(f"[LEAK CHECK] 漏液検出コマンドを受信: {data.hex()}")
+                        print(f"[LEAK CHECK] 漏液検出コマンドを受信（ポート2）: {data.hex()}")
                     with leak_detection_lock:
                         leak_detected = True
                     if DEBUG_LEAK_LOG:
-                        print("漏液検出コマンドを受信しました！")
+                        print("漏液検出コマンドを受信しました（ポート2）！")
+                    
+                    # ポート1が有効な場合、ポンプ1～3を緊急停止
+                    if serial_initialized1 and ser_1.is_open:
+                        if DEBUG_LEAK_LOG:
+                            print(f"[LEAK CHECK] ポンプ1～3の緊急停止コマンド（Zコマンド）を送信中...")
+                        
+                        # Zコマンド（緊急停止）を生成
+                        z_cmd = bytearray(11)
+                        z_cmd[0] = 0x02
+                        z_cmd[1] = ord('0')  # ポンプ番号
+                        z_cmd[2] = ord('Z')  # 緊急停止コマンド
+                        for i, c in enumerate("000000"):
+                            z_cmd[3 + i] = ord(c)
+                        z_cmd[9] = calc_checksum(z_cmd)
+                        z_cmd[10] = 0x03
+                        
+                        try:
+                            # ポート1の古いバッファをクリア
+                            if ser_1.in_waiting > 0:
+                                old_data = ser_1.read(ser_1.in_waiting)
+                            
+                            # Zコマンドを送信
+                            ser_1.write(z_cmd)
+                            if DEBUG_SERIAL_LOG:
+                                hex_str = ' '.join([f'{b:02X}' for b in z_cmd])
+                                print(f"[ACM0({SERIAL_PORT_1})] 緊急停止コマンド送信: {hex_str}")
+                        except Exception as e:
+                            print(f"[ERROR] ポート1への緊急停止コマンド送信に失敗: {e}")
+                    
                     return True
+    else:
+        if DEBUG_LEAK_LOG and not (ser_2 and serial_initialized2):
+            print(f"[LEAK CHECK] ポート2のチェックをスキップ - ser_2={ser_2 is not None}, initialized={serial_initialized2}")
     
     return False
 
@@ -1687,6 +1744,9 @@ def api_get_control_status():
 def api_check_leak_status():
     """状態確認API（Jコマンド）- 漏液状態を確認"""
     
+    # Arduinoからの自発的な漏液通知（Zコマンド）をチェック
+    check_leak_detection()
+    
     # 状態確認コマンドを生成
     value_str = "000000"
     cmd = bytearray(11)
@@ -1892,6 +1952,9 @@ def api_check_leak_status():
                     'command_bytes': list(cmd)
                 })
             else:
+                # バッファに残ったデータをクリア（次回の通信に影響を与えないため）
+                if target_ser.in_waiting > 0:
+                    target_ser.read(target_ser.in_waiting)
                 return jsonify({
                     'success': False,
                     'leak_detected': False,
@@ -1899,6 +1962,9 @@ def api_check_leak_status():
                     'command_bytes': list(cmd)
                 })
         else:
+            # バッファに残ったデータをクリア（次回の通信に影響を与えないため）
+            if target_ser.in_waiting > 0:
+                target_ser.read(target_ser.in_waiting)
             return jsonify({
                 'success': False,
                 'leak_detected': False,
@@ -1906,10 +1972,236 @@ def api_check_leak_status():
                 'command_bytes': list(cmd)
             })
     else:
+        # バッファに残ったデータをクリア（次回の通信に影響を与えないため）
+        if target_ser.in_waiting > 0:
+            target_ser.read(target_ser.in_waiting)
         return jsonify({
             'success': False,
             'leak_detected': False,
             'message': '応答タイムアウト',
+            'command_bytes': list(cmd)
+        })
+
+@app.route("/api/check_leak_status_port2")
+def api_check_leak_status_port2():
+    """状態確認API（Jコマンド）- ポート2（ポンプ4-6）の漏液状態と制御状態を確認"""
+    
+    # Arduinoからの自発的な漏液通知（Zコマンド）をチェック
+    check_leak_detection()
+    
+    # 状態確認コマンドを生成
+    value_str = "000000"
+    cmd = bytearray(11)
+    cmd[0] = 0x02
+    cmd[1] = ord('0')  # ポンプ番号（状態確認では無視）
+    cmd[2] = ord("J")  # 状態確認コマンド
+    for i, c in enumerate(value_str):
+        cmd[3 + i] = ord(c)
+    cmd[9] = calc_checksum(cmd)
+    cmd[10] = 0x03
+    
+    # シリアルポート2がオンラインかチェック
+    if not serial_initialized2:
+        return jsonify({
+            'success': False,
+            'leak_detected': False,
+            'message': 'ポート2のシリアル通信が初期化されていません',
+            'command_bytes': list(cmd)
+        })
+    
+    # ===== シリアルポート接続状態の確認 =====
+    target_ser = ser_2
+    port_name = f"ACM1({SERIAL_PORT_2})"
+    
+    if not target_ser.is_open:
+        return jsonify({
+            'success': False,
+            'leak_detected': False,
+            'message': f'ポート2 ({SERIAL_PORT_2}) が開いていません',
+            'command_bytes': list(cmd)
+        })
+    
+    # ===== 重要: シリアルバッファをクリア（古いデータを除去） =====
+    try:
+        if target_ser.in_waiting > 0:
+            old_data = target_ser.read(target_ser.in_waiting)
+            if DEBUG_SERIAL_LOG:
+                print(f"[{port_name}] 古いバッファデータをクリア: {old_data.hex()} ({len(old_data)} bytes)")
+    except Exception as e:
+        print(f"[ERROR] ポート2 バッファクリア失敗: {e}")
+        return jsonify({
+            'success': False,
+            'leak_detected': False,
+            'message': f'シリアルポートエラー: {str(e)}',
+            'command_bytes': list(cmd)
+        })
+    
+    # 状態確認コマンドを送信（ポート2に送信）
+    success = send_serial_command(2, "J", "000000")
+    
+    if not success:
+        return jsonify({
+            'success': False,
+            'leak_detected': False,
+            'message': 'ポート2への送信失敗',
+            'command_bytes': list(cmd)
+        })
+    
+    # 応答を待機（最大1秒）
+    import time
+    start_time = time.time()
+    response = None
+    
+    if DEBUG_SERIAL_LOG:
+        print(f"[{port_name}] Jコマンド送信完了。応答待機中...")
+    
+    try:
+        while time.time() - start_time < 1.0:
+            if target_ser.in_waiting >= 10:  # 10バイトの応答を待機
+                response = target_ser.read(10)
+                if DEBUG_SERIAL_LOG:
+                    hex_str = ' '.join([f'{b:02X}' for b in response])
+                    print(f"[{port_name}] Jコマンド応答受信: {hex_str} ({len(response)} bytes)")
+                break
+            time.sleep(0.01)
+    except Exception as e:
+        print(f"[ERROR] ポート2 応答待機中にエラー発生: {e}")
+        return jsonify({
+            'success': False,
+            'leak_detected': False,
+            'message': f'シリアル通信エラー: {str(e)}',
+            'command_bytes': list(cmd)
+        })
+    
+    if response and len(response) == 10:
+        # 状態確認応答の処理（STX + 'J' + ステータス(6桁) + CS + ETX）
+        if response[0] == 0x02 and response[1] == ord('J') and response[9] == 0x03:
+            # チェックサム検証
+            checksum = 0
+            for i in range(1, 8):
+                checksum ^= response[i]
+            
+            if checksum == response[8]:
+                # ステータス値を解析
+                leak_detected_status = (response[2] & 0x01) != 0
+                
+                # 回転速度を解析
+                rpm_pump4 = 0
+                rpm_pump5 = 0
+                rpm_pump6 = 0
+                
+                try:
+                    rpm_pump4 = decode_rpm_from_status_byte(response[3])
+                    rpm_pump5 = decode_rpm_from_status_byte(response[4])
+                    rpm_pump6 = decode_rpm_from_status_byte(response[5])
+                    
+                    if DEBUG_LEAK_LOG:
+                        print(f"[LEAK CHECK PORT2] ポンプ回転速度: P4={rpm_pump4}rpm, P5={rpm_pump5}rpm, P6={rpm_pump6}rpm")
+                except Exception as e:
+                    print(f"[ERROR] ポート2 RPM解析エラー: {e}")
+                
+                # 制御状態ビットを解析（5桁目・6桁目）
+                if DEBUG_LEAK_LOG:
+                    control_bits_high = response[6]
+                    control_bits_low = response[7]
+                    
+                    print(f"[LEAK CHECK PORT2] 制御状態ビット: 5桁目=0x{control_bits_high:02X}, 6桁目=0x{control_bits_low:02X}")
+                    print(f"[LEAK CHECK PORT2] ポンプ制御状態:")
+                    
+                    for pump_idx in range(3):
+                        pump_num = pump_idx + 4  # ポンプ4-6
+                        direction = "逆転(CCW)" if (control_bits_high & (1 << pump_idx)) else "正転(CW)"
+                        trapezoid = "ON" if (control_bits_high & (1 << (pump_idx + 3))) else "OFF"
+                        valve = "ON" if (control_bits_low & (1 << pump_idx)) else "OFF"
+                        excitation = "ON" if (control_bits_low & (1 << (pump_idx + 3))) else "OFF"
+                        
+                        print(f"  ポンプ{pump_num}: 方向={direction}, 台形加速={trapezoid}, バルブ常時OPEN={valve}, 励磁常時ON={excitation}")
+                
+                # 制御状態を配列に格納（JavaScript側で使用）
+                control_bits_high = response[6]
+                control_bits_low = response[7]
+                
+                pump_states = []
+                for pump_idx in range(3):
+                    pump_states.append({
+                        'direction_ccw': bool(control_bits_high & (1 << pump_idx)),
+                        'trapezoid': bool(control_bits_high & (1 << (pump_idx + 3))),
+                        'valve_open': bool(control_bits_low & (1 << pump_idx)),
+                        'excitation_on': bool(control_bits_low & (1 << (pump_idx + 3)))
+                    })
+                
+                # 漏液が検出されたかつポート1が有効な場合、ポンプ1～3を緊急停止
+                if leak_detected_status and serial_initialized1:
+                    if DEBUG_LEAK_LOG:
+                        print(f"[LEAK CHECK] 漏液検出（ポート2）！ポンプ1～3の緊急停止コマンド（Zコマンド）を送信中...")
+                    
+                    # ポート1の接続確認
+                    if not ser_1.is_open:
+                        print(f"[ERROR] ポート1（{SERIAL_PORT_1}）が開いていません")
+                    else:
+                        # Zコマンド（緊急停止）を生成
+                        z_cmd = bytearray(11)
+                        z_cmd[0] = 0x02
+                        z_cmd[1] = ord('0')  # ポンプ番号
+                        z_cmd[2] = ord('Z')  # 緊急停止コマンド
+                        for i, c in enumerate("000000"):
+                            z_cmd[3 + i] = ord(c)
+                        z_cmd[9] = calc_checksum(z_cmd)
+                        z_cmd[10] = 0x03
+                        
+                        try:
+                            # ポート1の古いバッファをクリア
+                            if ser_1.in_waiting > 0:
+                                old_data = ser_1.read(ser_1.in_waiting)
+                                if DEBUG_SERIAL_LOG:
+                                    print(f"[ACM0({SERIAL_PORT_1})] 古いバッファデータをクリア: {old_data.hex()} ({len(old_data)} bytes)")
+                            
+                            # Zコマンドを送信
+                            ser_1.write(z_cmd)
+                            if DEBUG_SERIAL_LOG:
+                                hex_str = ' '.join([f'{b:02X}' for b in z_cmd])
+                                print(f"[ACM0({SERIAL_PORT_1})] 緊急停止コマンド送信: {hex_str}")
+                        except Exception as e:
+                            print(f"[ERROR] ポート1への緊急停止コマンド送信に失敗: {e}")
+                
+                return jsonify({
+                    'success': True,
+                    'leak_detected': leak_detected_status,
+                    'rpm_pump4': rpm_pump4,
+                    'rpm_pump5': rpm_pump5,
+                    'rpm_pump6': rpm_pump6,
+                    'pump_states': pump_states,  # ポンプ4～6の制御状態
+                    'message': '状態確認完了（ポート2） - ' + ('漏液検出' if leak_detected_status else '正常'),
+                    'command_bytes': list(cmd)
+                })
+            else:
+                # バッファに残ったデータをクリア（次回の通信に影響を与えないため）
+                if target_ser.in_waiting > 0:
+                    target_ser.read(target_ser.in_waiting)
+                return jsonify({
+                    'success': False,
+                    'leak_detected': False,
+                    'message': f'チェックサムエラー: 期待値={checksum}, 受信値={response[8]}',
+                    'command_bytes': list(cmd)
+                })
+        else:
+            # バッファに残ったデータをクリア（次回の通信に影響を与えないため）
+            if target_ser.in_waiting > 0:
+                target_ser.read(target_ser.in_waiting)
+            return jsonify({
+                'success': False,
+                'leak_detected': False,
+                'message': f'応答フォーマットエラー',
+                'command_bytes': list(cmd)
+            })
+    else:
+        # バッファに残ったデータをクリア（次回の通信に影響を与えないため）
+        if target_ser.in_waiting > 0:
+            target_ser.read(target_ser.in_waiting)
+        return jsonify({
+            'success': False,
+            'leak_detected': False,
+            'message': 'ポート2 応答タイムアウト',
             'command_bytes': list(cmd)
         })
 
@@ -2291,7 +2583,7 @@ if __name__ == '__main__':
         print("="*50)
     
     # シリアルポート設定を更新（ハイセラ／シリンジ）
-    # コマンドライン引数で指定された場合は上書き
+    # コマンドライン引数で指定された値を使用
     SERIAL_PORT_1 = args.serial_port_1
     SERIAL_PORT_2 = args.serial_port_2
     SYRINGE_SERIAL_PORT = args.syringe_serial_port

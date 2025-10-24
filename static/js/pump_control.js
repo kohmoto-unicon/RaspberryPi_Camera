@@ -478,29 +478,65 @@ async function checkLeakStatus() {
   try {
     console.log('Jコマンド（状態確認）を実行中...', new Date().toLocaleTimeString());
     
-    // 状態確認コマンドを送信
-    const response = await fetch('/api/check_leak_status');
+    let leakDetectedPort1 = false;
+    let leakDetectedPort2 = false;
     
-    if (!response.ok) {
-      throw new Error(`HTTP error! status: ${response.status}`);
+    // ポート1の状態確認コマンドを送信
+    try {
+      const response = await fetch('/api/check_leak_status');
+      
+      if (response.ok) {
+        const data = await response.json();
+        
+        if (data.success) {
+          console.log('状態確認完了（ポート1）:', data.message, '- 漏液:', data.leak_detected);
+          console.log('ポンプ回転速度:', `P1=${data.rpm_pump1}rpm, P2=${data.rpm_pump2}rpm, P3=${data.rpm_pump3}rpm`);
+          
+          leakDetectedPort1 = data.leak_detected;
+          
+          // 回転速度をUIに表示
+          if (data.rpm_pump1 !== undefined) updateRpmDisplay(1, data.rpm_pump1);
+          if (data.rpm_pump2 !== undefined) updateRpmDisplay(2, data.rpm_pump2);
+          if (data.rpm_pump3 !== undefined) updateRpmDisplay(3, data.rpm_pump3);
+        } else {
+          console.log('状態確認エラー（ポート1）:', data.message);
+        }
+      }
+    } catch (error) {
+      console.log('ポート1の状態確認をスキップ:', error.message);
     }
     
-    const data = await response.json();
+    // 200ms待機してからポート2をチェック
+    await new Promise(resolve => setTimeout(resolve, 200));
     
-    if (data.success) {
-      console.log('状態確認完了:', data.message, '- 漏液:', data.leak_detected);
-      console.log('ポンプ回転速度:', `P1=${data.rpm_pump1}rpm, P2=${data.rpm_pump2}rpm, P3=${data.rpm_pump3}rpm`);
+    // ポート2の状態確認コマンドを送信
+    try {
+      const response2 = await fetch('/api/check_leak_status_port2');
       
-      // 漏液状態に応じてUIを更新
-      updateLeakDetectionUI(data.leak_detected);
-      
-      // 回転速度をUIに表示
-      if (data.rpm_pump1 !== undefined) updateRpmDisplay(1, data.rpm_pump1);
-      if (data.rpm_pump2 !== undefined) updateRpmDisplay(2, data.rpm_pump2);
-      if (data.rpm_pump3 !== undefined) updateRpmDisplay(3, data.rpm_pump3);
-    } else {
-      console.log('状態確認エラー:', data.message);
+      if (response2.ok) {
+        const data2 = await response2.json();
+        
+        if (data2.success) {
+          console.log('状態確認完了（ポート2）:', data2.message, '- 漏液:', data2.leak_detected);
+          console.log('ポンプ回転速度:', `P4=${data2.rpm_pump4}rpm, P5=${data2.rpm_pump5}rpm, P6=${data2.rpm_pump6}rpm`);
+          
+          leakDetectedPort2 = data2.leak_detected;
+          
+          // 回転速度をUIに表示
+          if (data2.rpm_pump4 !== undefined) updateRpmDisplay(4, data2.rpm_pump4);
+          if (data2.rpm_pump5 !== undefined) updateRpmDisplay(5, data2.rpm_pump5);
+          if (data2.rpm_pump6 !== undefined) updateRpmDisplay(6, data2.rpm_pump6);
+        } else {
+          console.log('状態確認エラー（ポート2）:', data2.message);
+        }
+      }
+    } catch (error) {
+      console.log('ポート2の状態確認をスキップ:', error.message);
     }
+    
+    // 漏液状態に応じてUIを更新（ポート1またはポート2で漏液検出）
+    updateLeakDetectionUI(leakDetectedPort1 || leakDetectedPort2);
+    
   } catch (error) {
     console.error('状態確認エラー:', error);
   }
@@ -704,17 +740,18 @@ async function loadControlStatus() {
 async function loadControlStatusFromJCommand() {
   console.log('[初回同期] Jコマンドでポンプ制御状態を取得中...');
   
+  // ポンプ1-3（ポート1）の制御状態を取得
   try {
-    const response = await fetch('/api/check_leak_status');
-    const data = await response.json();
+    const response1 = await fetch('/api/check_leak_status');
+    const data1 = await response1.json();
     
-    console.log('[初回同期] Jコマンド取得結果:', data);
+    console.log('[初回同期] Jコマンド取得結果（ポート1）:', data1);
     
-    if (data.success && data.pump_states) {
+    if (data1.success && data1.pump_states) {
       // ポンプ1～3の制御状態をUIに反映
       for (let pump = 1; pump <= 3; pump++) {
         const idx = pump - 1;
-        const state = data.pump_states[idx];
+        const state = data1.pump_states[idx];
         
         // 方向切替スイッチ
         const directionSwitch = document.querySelector(`input[type="checkbox"][onchange*="toggleDirection(${pump}"]`);
@@ -753,12 +790,74 @@ async function loadControlStatusFromJCommand() {
         }
       }
       
-      console.log('[初回同期] Jコマンドによる制御状態の反映が完了しました');
+      console.log('[初回同期] ポート1（ポンプ1-3）のJコマンドによる制御状態の反映が完了しました');
     } else {
-      console.log('[初回同期] Jコマンド取得失敗または状態データなし:', data.message);
+      console.log('[初回同期] ポート1 Jコマンド取得失敗または状態データなし:', data1.message);
     }
   } catch (error) {
-    console.error('[初回同期] Jコマンド取得エラー:', error);
+    console.error('[初回同期] ポート1 Jコマンド取得エラー:', error);
+  }
+  
+  // ポート1の処理完了後、少し待機してからポート2の処理を開始
+  // （シリアル通信の安定性確保のため）
+  await new Promise(resolve => setTimeout(resolve, 200));  // 200ms待機
+  
+  // ポンプ4-6（ポート2）の制御状態を取得
+  try {
+    const response2 = await fetch('/api/check_leak_status_port2');
+    const data2 = await response2.json();
+    
+    console.log('[初回同期] Jコマンド取得結果（ポート2）:', data2);
+    
+    if (data2.success && data2.pump_states) {
+      // ポンプ4～6の制御状態をUIに反映
+      for (let pump = 4; pump <= 6; pump++) {
+        const idx = pump - 4;  // ポンプ4-6はインデックス0-2
+        const state = data2.pump_states[idx];
+        
+        // 方向切替スイッチ
+        const directionSwitch = document.querySelector(`input[type="checkbox"][onchange*="toggleDirection(${pump}"]`);
+        if (directionSwitch) {
+          directionSwitch.checked = state.direction_ccw;
+          document.getElementById('dirLabel' + pump).innerText = state.direction_ccw ? '逆転' : '正転';
+          saveSwitchState(pump, 'direction', state.direction_ccw);
+          console.log(`[初回同期] ポンプ${pump}の方向: ${state.direction_ccw ? '逆転' : '正転'}`);
+        }
+        
+        // 台形加速スイッチ
+        const accelerationSwitch = document.querySelector(`input[type="checkbox"][onchange*="toggleAccel(${pump}"]`);
+        if (accelerationSwitch) {
+          accelerationSwitch.checked = state.trapezoid;
+          document.getElementById('accelLabel' + pump).innerText = state.trapezoid ? 'ON' : 'OFF';
+          saveSwitchState(pump, 'acceleration', state.trapezoid);
+          console.log(`[初回同期] ポンプ${pump}の台形加速: ${state.trapezoid ? 'ON' : 'OFF'}`);
+        }
+        
+        // バルブ常時Openスイッチ
+        const valveSwitch = document.querySelector(`input[type="checkbox"][onchange*="toggleValve(${pump}"]`);
+        if (valveSwitch) {
+          valveSwitch.checked = state.valve_open;
+          document.getElementById('valveLabel' + pump).innerText = state.valve_open ? 'ON' : 'OFF';
+          saveSwitchState(pump, 'valve', state.valve_open);
+          console.log(`[初回同期] ポンプ${pump}のバルブ常時OPEN: ${state.valve_open ? 'ON' : 'OFF'}`);
+        }
+        
+        // 励磁常時ONスイッチ
+        const excitationSwitch = document.querySelector(`input[type="checkbox"][onchange*="toggleExcitation(${pump}"]`);
+        if (excitationSwitch) {
+          excitationSwitch.checked = state.excitation_on;
+          document.getElementById('excitationLabel' + pump).innerText = state.excitation_on ? 'ON' : 'OFF';
+          saveSwitchState(pump, 'excitation', state.excitation_on);
+          console.log(`[初回同期] ポンプ${pump}の励磁常時ON: ${state.excitation_on ? 'ON' : 'OFF'}`);
+        }
+      }
+      
+      console.log('[初回同期] ポート2（ポンプ4-6）のJコマンドによる制御状態の反映が完了しました');
+    } else {
+      console.log('[初回同期] ポート2 Jコマンド取得失敗または状態データなし:', data2.message);
+    }
+  } catch (error) {
+    console.error('[初回同期] ポート2 Jコマンド取得エラー:', error);
   }
 }
 
@@ -1209,8 +1308,9 @@ document.addEventListener('DOMContentLoaded', function() {
         const statusResponse = await fetch('/api/status');
         const statusData = await statusResponse.json();
         
-        if (statusData.hysera_port1_status) {
+        if (statusData.hysera_port1_status || statusData.hysera_port2_status) {
           console.log('[初回同期] USB通信がオンラインのため、Jコマンドでポンプ制御状態を取得します');
+          console.log(`[初回同期] ポート1: ${statusData.hysera_port1_status ? 'オンライン' : 'オフライン'}, ポート2: ${statusData.hysera_port2_status ? 'オンライン' : 'オフライン'}`);
           await loadControlStatusFromJCommand();
         } else {
           console.log('[初回同期] USB通信がオフラインのため、Jコマンド送信をスキップします');
