@@ -1750,7 +1750,8 @@ def api_check_leak_status():
                 # ステータス値を解析（バイナリデータとして直接処理）
                 # response[2]: 漏液フラグ（0=正常、1=漏液）
                 # response[3-5]: ポンプ1-3の回転速度エンコード値
-                # response[6-7]: 未使用
+                # response[6]: 制御状態ビット(上位8ビット) - 正転逆転(bit0-2)、台形加速(bit3-5)
+                # response[7]: 制御状態ビット(下位8ビット) - バルブ常時OPEN(bit0-2)、励磁常時ON(bit3-5)
                 
                 leak_detected_status = (response[2] & 0x01) != 0  # bit 0 をチェック
                 
@@ -1778,6 +1779,27 @@ def api_check_leak_status():
                         print(f"[LEAK CHECK] ポンプ回転速度（エンコード値）: P1={response[3]}, P2={response[4]}, P3={response[5]}")
                 except Exception as e:
                     print(f"[ERROR] RPM解析エラー: {e}")
+                
+                # 制御状態ビットを解析（5桁目・6桁目）
+                if DEBUG_LEAK_LOG:
+                    control_bits_high = response[6]  # 5桁目: 正転逆転(bit0-2) + 台形加速(bit3-5)
+                    control_bits_low = response[7]   # 6桁目: バルブOPEN(bit0-2) + 励磁ON(bit3-5)
+                    
+                    print(f"[LEAK CHECK] 制御状態ビット: 5桁目=0x{control_bits_high:02X}, 6桁目=0x{control_bits_low:02X}")
+                    print(f"[LEAK CHECK] ポンプ制御状態:")
+                    
+                    for pump_idx in range(3):
+                        pump_num = pump_idx + 1
+                        # 正転逆転 (bit0-2)
+                        direction = "逆転(CCW)" if (control_bits_high & (1 << pump_idx)) else "正転(CW)"
+                        # 台形加速 (bit3-5)
+                        trapezoid = "ON" if (control_bits_high & (1 << (pump_idx + 3))) else "OFF"
+                        # バルブ常時OPEN (bit0-2)
+                        valve = "ON" if (control_bits_low & (1 << pump_idx)) else "OFF"
+                        # 励磁常時ON (bit3-5)
+                        excitation = "ON" if (control_bits_low & (1 << (pump_idx + 3))) else "OFF"
+                        
+                        print(f"  ポンプ{pump_num}: 方向={direction}, 台形加速={trapezoid}, バルブ常時OPEN={valve}, 励磁常時ON={excitation}")
                 
                 # 漏液が検出されたかつポート2が有効な場合、ポンプ4～6を緊急停止
                 if leak_detected_status and serial_initialized2:

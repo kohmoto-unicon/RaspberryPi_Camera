@@ -1663,7 +1663,7 @@ void processCommand(byte* cmd) {
     lcdPrint("HEX: ");
     lcdPrint(hexStr);
     displaySerialSend("TOTAL", response, 10);
-  } else if (action == 'J') {  // 状態確認コマンド（漏液チェック＋回転速度）
+  } else if (action == 'J') {  // 状態確認コマンド（漏液チェック＋回転速度＋制御状態）
     // Python側から送信される状態確認コマンド: STX/0/j/000000/CS/ETX
     // Arduino側の応答: STX/J/XXXXXX/CS/ETX (バイナリデータ)
     // X桁目の内訳（各バイトはバイナリ値）:
@@ -1671,7 +1671,8 @@ void processCommand(byte* cmd) {
     //   2桁目: ポンプ1の回転速度エンコード値（0-255）
     //   3桁目: ポンプ2の回転速度エンコード値（0-255）
     //   4桁目: ポンプ3の回転速度エンコード値（0-255）
-    //   5,6桁目: 未使用（0）
+    //   5桁目: 制御状態ビット(上位8ビット) - ポンプ1～3の正転逆転(bit0-2)、台形加速(bit3-5)、未使用(bit6-7)
+    //   6桁目: 制御状態ビット(下位8ビット) - バルブ常時OPEN(bit0-2)、励磁常時ON(bit3-5)、未使用(bit6-7)
     //   エンコード方式: 0-4=特殊(0-4*10), 5以上=値+45=rpm
     
     byte response[11];
@@ -1706,9 +1707,39 @@ void processCommand(byte* cmd) {
       response[3 + i] = rpmEncoded;
     }
     
-    // 5-6桁目: 未使用（0）
-    response[6] = 0x00;
-    response[7] = 0x00;
+    // 5桁目: 制御状態ビット(上位8ビット)
+    // bit0-2: ポンプ1～3の正転逆転 (0=正転CW, 1=逆転CCW)
+    // bit3-5: ポンプ1～3の台形加速ON/OFF (0=OFF, 1=ON)
+    // bit6-7: 未使用（0）
+    byte controlBitsHigh = 0;
+    for (int i = 0; i < 3; i++) {
+      // 正転逆転状態 (bit0-2)
+      if (digitalRead(dirPins[i]) == HIGH) {  // CCW=逆転
+        controlBitsHigh |= (1 << i);
+      }
+      // 台形加速状態 (bit3-5)
+      if (useTrapezoid[i]) {
+        controlBitsHigh |= (1 << (i + 3));
+      }
+    }
+    response[6] = controlBitsHigh;
+    
+    // 6桁目: 制御状態ビット(下位8ビット)
+    // bit0-2: ポンプ1～3のバルブ常時OPEN (0=OFF, 1=ON)
+    // bit3-5: ポンプ1～3の励磁常時ON (0=OFF, 1=ON)
+    // bit6-7: 未使用（0）
+    byte controlBitsLow = 0;
+    for (int i = 0; i < 3; i++) {
+      // バルブ常時OPEN状態 (bit0-2)
+      if (valveNormallyOpen[i]) {
+        controlBitsLow |= (1 << i);
+      }
+      // 励磁常時ON状態 (bit3-5)
+      if (excitationAlwaysOn[i]) {
+        controlBitsLow |= (1 << (i + 3));
+      }
+    }
+    response[7] = controlBitsLow;
     
     // チェックサム計算（1-7バイト目: 'J' + ステータス6バイト）
     byte checksum = 0;
