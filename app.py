@@ -2037,7 +2037,9 @@ def api_check_leak_status_port2():
         })
     
     # 状態確認コマンドを送信（ポート2に送信）
-    success = send_serial_command(2, "J", "000000")
+    # pump_no=4を指定することでポート2（Arduino 2）に送信
+    # Arduino内部では1～3で制御されるため、send_serial_command内で4→1に変換される
+    success = send_serial_command(4, "J", "000000")
     
     if not success:
         return jsonify({

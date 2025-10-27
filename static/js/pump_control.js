@@ -482,11 +482,14 @@ async function checkLeakStatus() {
     let leakDetectedPort2 = false;
     
     // ポート1の状態確認コマンドを送信
+    console.log('[DEBUG] ポート1の状態確認を開始...');
     try {
       const response = await fetch('/api/check_leak_status');
+      console.log('[DEBUG] ポート1 fetch完了, response.ok:', response.ok, 'status:', response.status);
       
       if (response.ok) {
         const data = await response.json();
+        console.log('[DEBUG] ポート1 JSON取得:', data);
         
         if (data.success) {
           console.log('状態確認完了（ポート1）:', data.message, '- 漏液:', data.leak_detected);
@@ -501,20 +504,27 @@ async function checkLeakStatus() {
         } else {
           console.log('状態確認エラー（ポート1）:', data.message);
         }
+      } else {
+        console.log('[DEBUG] ポート1 HTTPエラー:', response.status, response.statusText);
       }
     } catch (error) {
       console.log('ポート1の状態確認をスキップ:', error.message);
+      console.error('[DEBUG] ポート1エラー詳細:', error);
     }
     
     // 200ms待機してからポート2をチェック
+    console.log('[DEBUG] 200ms待機後、ポート2の状態確認を開始...');
     await new Promise(resolve => setTimeout(resolve, 200));
     
     // ポート2の状態確認コマンドを送信
+    console.log('[DEBUG] ポート2の状態確認を開始...');
     try {
       const response2 = await fetch('/api/check_leak_status_port2');
+      console.log('[DEBUG] ポート2 fetch完了, response.ok:', response2.ok, 'status:', response2.status);
       
       if (response2.ok) {
         const data2 = await response2.json();
+        console.log('[DEBUG] ポート2 JSON取得:', data2);
         
         if (data2.success) {
           console.log('状態確認完了（ポート2）:', data2.message, '- 漏液:', data2.leak_detected);
@@ -529,10 +539,15 @@ async function checkLeakStatus() {
         } else {
           console.log('状態確認エラー（ポート2）:', data2.message);
         }
+      } else {
+        console.log('[DEBUG] ポート2 HTTPエラー:', response2.status, response2.statusText);
       }
     } catch (error) {
       console.log('ポート2の状態確認をスキップ:', error.message);
+      console.error('[DEBUG] ポート2エラー詳細:', error);
     }
+    
+    console.log('[DEBUG] 漏液状態: ポート1=' + leakDetectedPort1 + ', ポート2=' + leakDetectedPort2);
     
     // 漏液状態に応じてUIを更新（ポート1またはポート2で漏液検出）
     updateLeakDetectionUI(leakDetectedPort1 || leakDetectedPort2);
