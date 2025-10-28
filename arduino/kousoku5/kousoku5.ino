@@ -10,12 +10,20 @@ const int debugLedPin = 52;
 const int extInterruptPins[3] = {18, 19, 20}; // INT3, INT2, INT1
 
 // ==== HD44780 LCD制御用ピン設定（4bitモード） ====
+/*
 const int lcdRS = 2;    // RS (Register Select)
 const int lcdE  = 3;    // E  (Enable)
 const int lcdD4 = 4;    // D4 (Data bit 4)
 const int lcdD5 = 5;    // D5 (Data bit 5
 const int lcdD6 = 6;    // D6 (Data bit 6)
 const int lcdD7 = 7;    // D7 (Data bit 7)
+*/
+const int lcdRS = 43;    // RS (Register Select)
+const int lcdE  = 44;    // E  (Enable)
+const int lcdD4 = 45;    // D4 (Data bit 4)
+const int lcdD5 = 46;    // D5 (Data bit 5
+const int lcdD6 = 47;    // D6 (Data bit 6)
+const int lcdD7 = 48;    // D7 (Data bit 7)
 // RWはGNDに接続（ソフト制御なし）
 
 // ==== タイマー1による1ms処理用 ====
