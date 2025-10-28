@@ -298,8 +298,11 @@ async function sendPumpCommand(pump, action, value = "000000", microstepState = 
 // システム状態確認
 async function checkStatus() {
   try {
+    console.log('[checkStatus] 状態確認開始...');
     const response = await fetch('/api/status');
     const data = await response.json();
+    
+    console.log('[checkStatus] APIレスポンス:', data);
     
     const statusIndicator1 = document.getElementById('serialStatus1');
     const statusText1 = document.getElementById('statusText1');
@@ -310,22 +313,38 @@ async function checkStatus() {
     if (data.hysera_port1_status) {
       statusIndicator1.style.background = '#28a745';
       statusText1.textContent = 'ACM0（ポンプ1-3）: オンライン';
+      console.log('[checkStatus] ACM0: オンライン');
     } else {
       statusIndicator1.style.background = '#dc3545';
       statusText1.textContent = 'ACM0（ポンプ1-3）: オフライン';
+      console.log('[checkStatus] ACM0: オフライン');
     }
     
     // ACM1（ポンプ4-6）の状態
     if (data.hysera_port2_status) {
       statusIndicator2.style.background = '#28a745';
       statusText2.textContent = 'ACM1（ポンプ4-6）: オンライン';
+      console.log('[checkStatus] ACM1: オンライン');
     } else {
       statusIndicator2.style.background = '#dc3545';
       statusText2.textContent = 'ACM1（ポンプ4-6）: オフライン';
+      console.log('[checkStatus] ACM1: オフライン');
     }
+    
+    console.log('[checkStatus] 状態確認完了');
     
   } catch (error) {
     console.error('状態確認エラー:', error);
+    // エラー時にステータス表示を更新
+    const statusIndicator1 = document.getElementById('serialStatus1');
+    const statusText1 = document.getElementById('statusText1');
+    const statusIndicator2 = document.getElementById('serialStatus2');
+    const statusText2 = document.getElementById('statusText2');
+    
+    if (statusIndicator1) statusIndicator1.style.background = '#ffc107';
+    if (statusText1) statusText1.textContent = 'ACM0（ポンプ1-3）: エラー';
+    if (statusIndicator2) statusIndicator2.style.background = '#ffc107';
+    if (statusText2) statusText2.textContent = 'ACM1（ポンプ4-6）: エラー';
   }
 }
 
@@ -1368,7 +1387,8 @@ document.addEventListener('DOMContentLoaded', function() {
     console.log(`漏液チェック状態を復元: ${leakCheckEnabled ? 'ON' : 'OFF'}`);
   }
   
-  checkStatus();
+  // ページ読み込み直後に1回呼び出す（少し待ってから）
+  setTimeout(checkStatus, 100);
   checkLeakStatus();
   
   // 30秒ごとに状態確認
