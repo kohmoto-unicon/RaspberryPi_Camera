@@ -12,7 +12,7 @@ import argparse
 # ========================================
 DEBUG_SYSTEM_LOG = True   # システム初期化ログは常にON
 DEBUG_SERIAL_LOG = False  # シリアル通信ログ（デフォルトOFF）
-DEBUG_LEAK_LOG = False    # 漏液検出ログ（デフォルトOFF）
+DEBUG_LEAK_LOG = True     # 漏液検出ログ（デフォルトON - 呼び出し元トレース用）
 DEBUG_STREAM_LOG = False  # ストリーミングログ（デフォルトOFF）
 
 import os
@@ -224,12 +224,12 @@ def initialize_syringe_serial():
         return False
 
 # 漏液検出専用のチェック機能
-def check_leak_detection():
+def check_leak_detection(caller="Unknown"):
     """漏液検出コマンドをチェックする関数（他のシリアル通信と競合しない）"""
     global leak_detected
     
     if DEBUG_LEAK_LOG:
-        print(f"[LEAK CHECK] check_leak_detection() 開始 - Port1初期化:{serial_initialized1}, Port2初期化:{serial_initialized2}")
+        print(f"[LEAK CHECK] check_leak_detection() 開始 - 呼び出し元:{caller} - Port1初期化:{serial_initialized1}, Port2初期化:{serial_initialized2}")
     
     # ポート1のチェック
     if ser_1 and serial_initialized1:
@@ -1026,7 +1026,7 @@ def api_status():
 @app.route('/api/check_leak')
 def api_check_leak():
     """漏液検出をチェックするAPI"""
-    leak_found = check_leak_detection()
+    leak_found = check_leak_detection(caller="/api/check_leak")
     return jsonify({
         'success': True,
         'leak_detected': leak_detected,
@@ -1310,7 +1310,7 @@ def api_get_current():
         print(f"[{port_name}] Cコマンド送信完了。応答待機中...")
     
     # 漏液チェックを先に実行
-    check_leak_detection()
+    check_leak_detection(caller="/api/get_current")
     
     while time.time() - start_time < 1.0:
         if target_ser.in_waiting >= 10:  # 10バイトの応答を待機
@@ -1436,7 +1436,7 @@ def api_get_rpm():
         print(f"[{port_name}] Xコマンド送信完了。応答待機中...")
     
     # 漏液チェックを先に実行
-    check_leak_detection()
+    check_leak_detection(caller="/api/get_rpm")
     
     while time.time() - start_time < 1.0:
         if target_ser.in_waiting >= 10:  # 10バイトの応答を待機
@@ -1673,7 +1673,7 @@ def api_get_control_status():
         print(f"[{port_name}] Jコマンド送信完了。応答待機中...")
     
     # 漏液チェックを先に実行
-    check_leak_detection()
+    check_leak_detection(caller="/api/get_control_status")
     
     while time.time() - start_time < 1.0:
         if target_ser.in_waiting >= 10:  # 10バイトの応答を待機
@@ -1745,7 +1745,7 @@ def api_check_leak_status():
     """状態確認API（Jコマンド）- 漏液状態を確認"""
     
     # Arduinoからの自発的な漏液通知（Zコマンド）をチェック
-    check_leak_detection()
+    check_leak_detection(caller="/api/check_leak_status")
     
     # 状態確認コマンドを生成
     value_str = "000000"
@@ -1987,7 +1987,7 @@ def api_check_leak_status_port2():
     """状態確認API（Jコマンド）- ポート2（ポンプ4-6）の漏液状態と制御状態を確認"""
     
     # Arduinoからの自発的な漏液通知（Zコマンド）をチェック
-    check_leak_detection()
+    check_leak_detection(caller="/api/check_leak_status_port2")
     
     # 状態確認コマンドを生成
     value_str = "000000"
