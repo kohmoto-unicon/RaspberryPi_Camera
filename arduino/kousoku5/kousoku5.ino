@@ -1470,9 +1470,11 @@ void processCommand(byte* cmd) {
         }
       } else {
         unsigned int newInterval = rpmToIntervalUs(value);
+        noInterrupts();
         stepInterval[idx] = newInterval;               // 変数を先に更新
         pendingIntervalUs[idx] = newInterval;          // 実レジスタ更新はISRで連続的に反映
         pendingIntervalUpdate[idx] = true;
+        interrupts();
         targetSpeedSps[idx] = rpmToSps(value);
       }
       lcdShowMessage("Receive Speed");
