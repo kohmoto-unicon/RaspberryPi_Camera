@@ -745,8 +745,10 @@ void startMotorCommon(int idx, unsigned long steps) {
   
   // 起動時に目標速度・初速・加速度を再計算（停止後の低速化防止）
   if (useTrapezoid[idx]) {
-    // 目標速度は globalSpeedRpm を基準に再設定
-    targetSpeedSps[idx] = rpmToSps(globalSpeedRpm);
+    // 目標速度が未設定（0以下）の場合のみ globalSpeedRpm を適用
+    if (targetSpeedSps[idx] <= 0.0f) {
+      targetSpeedSps[idx] = rpmToSps(globalSpeedRpm);
+    }
     initializeTrapezoidSpeed(idx);
     
     stepInterval[idx] = spsToIntervalUs(currentSpeedSps[idx]);

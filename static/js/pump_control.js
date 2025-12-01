@@ -134,8 +134,8 @@ function sendStop(pump){
   sendPumpCommand(pump, 'S');
 }
 
-// グローバル速度設定（全モータ共通）
-async function setGlobalRPM(pump){
+// 個別速度設定（各モータ個別）
+async function setPumpRPM(pump){
   const rpmElement = document.getElementById('rpmSetting' + pump);
   let rpm;
   
@@ -164,13 +164,11 @@ async function setGlobalRPM(pump){
   }
   
   try {
-    // 'W'コマンドで送信（全モータ共通速度設定）
-    console.log(`グローバル速度設定: ${rpmNum} RPM`);
-    await sendPumpCommand(pump, 'W', rpmNum.toString());
+    // 'V'コマンドで送信（個別速度設定）
+    console.log(`個別速度設定: ポンプ${pump} -> ${rpmNum} RPM`);
+    await sendPumpCommand(pump, 'V', rpmNum.toString());
     
-    // 設定成功後、同じグループの他のポンプのRPM選択も同じ値に同期
-    // （ポンプ1～3は互いに同期、ポンプ4～6も互いに同期）
-    syncRPMSettings(pump, rpm);
+    // 同期処理は削除されました
   } finally {
     // 処理完了後、フラグをリセット（500ms待機してから、通信安定化を待つ）
     setTimeout(() => {
@@ -184,36 +182,6 @@ async function setGlobalRPM(pump){
 function startRpmSetting() {
   isRpmSettingInProgress = true;
   console.log('RPM操作開始、漏液チェックをスキップします');
-}
-
-// RPM設定を他のポンプと同期する関数
-function syncRPMSettings(sourcePump, rpmValue) {
-  console.log(`RPM設定を同期中: ポンプ${sourcePump}から他のポンプへ ${rpmValue} RPM`);
-  
-  // ポンプ1～3と4～6をそれぞれ同期
-  let startPump, endPump;
-  if (sourcePump >= 1 && sourcePump <= 3) {
-    startPump = 1;
-    endPump = 3;
-  } else if (sourcePump >= 4 && sourcePump <= 6) {
-    startPump = 4;
-    endPump = 6;
-  } else {
-    return; // 範囲外の場合は何もしない
-  }
-  
-  for (let targetPump = startPump; targetPump <= endPump; targetPump++) {
-    if (targetPump === sourcePump) {
-      continue; // 送信元ポンプはスキップ
-    }
-    
-    const targetElement = document.getElementById('rpmSetting' + targetPump);
-    if (targetElement && targetElement.choices) {
-      // Choices.jsのsetChoiceByValueメソッドで値を設定
-      targetElement.choices.setChoiceByValue(rpmValue);
-      console.log(`ポンプ${targetPump}のRPM設定を ${rpmValue} RPM に同期しました`);
-    }
-  }
 }
 
 // RPM取得
@@ -1116,16 +1084,7 @@ function initializeChoices() {
       // rpmElementにchoicesインスタンスを保存
       rpmElement.choices = rpmChoices;
       
-      // ポンプ1～6の場合、値が変更されたら同じグループの他のポンプのRPMも同期
-      if (pump >= 1 && pump <= 6) {
-        rpmElement.addEventListener('change', function(event) {
-          const selectedValue = event.target.value;
-          if (selectedValue) {
-            console.log(`ポンプ${pump}のRPM選択が変更されました: ${selectedValue} RPM`);
-            syncRPMSettings(pump, selectedValue);
-          }
-        });
-      }
+      // 同期処理のイベントリスナーは削除されました
     }
   }
   
