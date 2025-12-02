@@ -17,6 +17,7 @@ DEBUG_STREAM_LOG = False  # ストリーミングログ（デフォルトOFF）
 
 import os
 import time
+import datetime
 import threading
 import subprocess
 import tempfile
@@ -112,6 +113,46 @@ SYRINGE_BAUD_RATE = 9600  # シリンジポンプのボーレート
 ser_syringe = None
 syringe_serial_initialized = False
 syringe_pump_controllers = []  # シリンジポンプ制御インスタンスのリスト
+
+# 連続撮影用設定
+CAPTURE_DIR = os.path.join(os.path.dirname(__file__), 'static', 'captures')
+if not os.path.exists(CAPTURE_DIR):
+    os.makedirs(CAPTURE_DIR)
+
+capture_thread = None
+capture_active = False
+capture_interval = 60  # 秒
+
+def continuous_capture_loop():
+    global capture_active, capture_interval
+    print(f"連続撮影を開始します。間隔: {capture_interval}秒")
+    while capture_active:
+        try:
+            frame = get_frame()
+            if frame is not None:
+                # ファイル名生成
+                now = datetime.datetime.now()
+                filename = f"snapshot_{now.strftime('%Y%m%d_%H%M%S')}.jpg"
+                filepath = os.path.join(CAPTURE_DIR, filename)
+                
+                # 保存 (OpenCVはBGRなので変換が必要だがget_frameはRGBを返す仕様になっている)
+                # cv2.imwriteはBGRを期待するので、RGB->BGR変換が必要
+                frame_bgr = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+                cv2.imwrite(filepath, frame_bgr)
+                if DEBUG_SYSTEM_LOG:
+                    print(f"画像保存: {filepath}")
+            
+            # 指定間隔待機（停止フラグを細かくチェックするため分割待機）
+            # 0.1秒ごとにチェック
+            steps = int(capture_interval * 10)
+            for _ in range(steps):
+                if not capture_active:
+                    break
+                time.sleep(0.1)
+                
+        except Exception as e:
+            print(f"連続撮影エラー: {e}")
+            time.sleep(1)
 
 def initialize_serial():
     """シリアル通信を初期化（ハイセラポンプ）"""
@@ -1068,6 +1109,33 @@ def api_snapshot():
             return Response(buffer.tobytes(), mimetype='image/jpeg')
     
     return jsonify({'error': 'スナップショット取得に失敗しました'}), 500
+
+@app.route('/api/start_capture', methods=['POST'])
+def api_start_capture():
+    """連続撮影開始API"""
+    global capture_thread, capture_active, capture_interval
+    data = request.json
+    interval_ms = data.get('interval', 60000)
+    capture_interval = interval_ms / 1000.0
+    
+    if not capture_active:
+        capture_active = True
+        capture_thread = threading.Thread(target=continuous_capture_loop, daemon=True)
+        capture_thread.start()
+        
+    return jsonify({'success': True, 'message': '連続撮影を開始しました'})
+
+@app.route('/api/stop_capture', methods=['POST'])
+def api_stop_capture():
+    """連続撮影停止API"""
+    global capture_active
+    capture_active = False
+    return jsonify({'success': True, 'message': '連続撮影を停止しました'})
+
+@app.route('/api/capture_status')
+def api_capture_status():
+    """連続撮影状態API"""
+    return jsonify({'active': capture_active, 'interval': capture_interval * 1000})
 
 @app.route('/api/restart_camera')
 def api_restart_camera():

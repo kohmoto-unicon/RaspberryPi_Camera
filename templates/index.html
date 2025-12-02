@@ -121,6 +121,16 @@
             box-shadow: 0 5px 15px rgba(240, 147, 251, 0.4);
         }
 
+        .btn-danger {
+            background: linear-gradient(135deg, #ff416c 0%, #ff4b2b 100%);
+            color: white;
+        }
+
+        .btn-danger:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(255, 65, 108, 0.4);
+        }
+
         .status {
             background: #f8f9fa;
             border-radius: 10px;
@@ -300,6 +310,22 @@
                 <button class="btn btn-warning" onclick="restartCamera()">
                     カメラ再起動
                 </button>
+                
+                <div style="display: flex; align-items: center; gap: 10px;">
+                    <select id="snapInterval" style="padding: 12px; border-radius: 25px; border: 1px solid #ccc; font-size: 1em; cursor: pointer;">
+                        <option value="60000">1分</option>
+                        <option value="300000">5分</option>
+                        <option value="600000">10分</option>
+                        <option value="1800000">30分</option>
+                        <option value="3600000">60分</option>
+                        <option value="7200000">120分</option>
+                        <option value="10800000">180分</option>
+                        <option value="14400000">240分</option>
+                    </select>
+                    <button id="btnContinuousSnap" class="btn btn-primary" onclick="toggleContinuousSnap()">
+                        📸 連続スナップ開始
+                    </button>
+                </div>
 
 {#
                 <button class="btn btn-primary" onclick="startFFmpegStreaming()">
@@ -440,6 +466,88 @@
                 showError('カメラ再起動に失敗しました: ' + error.message);
             } finally {
                 showLoading(false);
+            }
+        }
+
+        // 連続スナップ機能
+        // サーバーサイドで実行されるため、ブラウザを閉じても継続します
+        
+        async function toggleContinuousSnap() {
+            const btn = document.getElementById('btnContinuousSnap');
+            const intervalSelect = document.getElementById('snapInterval');
+            const isRunning = btn.classList.contains('btn-danger');
+            
+            if (isRunning) {
+                // 停止
+                if (!confirm('連続スナップを停止しますか？')) {
+                    return;
+                }
+                
+                try {
+                    const res = await fetch('/api/stop_capture', { method: 'POST' });
+                    const data = await res.json();
+                    if (data.success) {
+                        btn.textContent = '📸 連続スナップ開始';
+                        btn.classList.remove('btn-danger');
+                        btn.classList.add('btn-primary');
+                        intervalSelect.disabled = false;
+                        alert('連続スナップを停止しました');
+                    }
+                } catch (e) {
+                    showError('停止に失敗しました: ' + e.message);
+                }
+            } else {
+                // 開始
+                const intervalMs = parseInt(intervalSelect.value);
+                const intervalMin = intervalMs / 60000;
+                
+                if (!confirm(`連続スナップを開始しますか？\n${intervalMin}分ごとにサーバー側で撮影・保存されます。\n\n※ページを閉じても撮影は継続されます。\n※画像はサーバー内の static/captures フォルダに保存されます。`)) {
+                    return;
+                }
+                
+                try {
+                    const res = await fetch('/api/start_capture', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({ interval: intervalMs })
+                    });
+                    const data = await res.json();
+                    if (data.success) {
+                        btn.textContent = '⏹️ 連続スナップ停止';
+                        btn.classList.remove('btn-primary');
+                        btn.classList.add('btn-danger');
+                        intervalSelect.disabled = true;
+                        alert('連続スナップを開始しました');
+                    }
+                } catch (e) {
+                    showError('開始に失敗しました: ' + e.message);
+                }
+            }
+        }
+        
+        // 連続撮影の状態を確認してボタン表示を更新
+        async function checkCaptureStatus() {
+            try {
+                const res = await fetch('/api/capture_status');
+                const data = await res.json();
+                
+                const btn = document.getElementById('btnContinuousSnap');
+                const intervalSelect = document.getElementById('snapInterval');
+                
+                if (data.active) {
+                    btn.textContent = '⏹️ 連続スナップ停止';
+                    btn.classList.remove('btn-danger');
+                    btn.classList.add('btn-primary');
+                    intervalSelect.disabled = true;
+                    intervalSelect.value = data.interval;
+                } else {
+                    btn.textContent = '📸 連続スナップ開始';
+                    btn.classList.remove('btn-danger');
+                    btn.classList.add('btn-primary');
+                    intervalSelect.disabled = false;
+                }
+            } catch (e) {
+                console.warn('連続撮影状態確認失敗', e);
             }
         }
 
@@ -650,6 +758,7 @@
             checkStatus();
             getCameraSettings();
             checkFFmpegStatus();
+            checkCaptureStatus(); // 連続撮影状態の確認を追加
             
             // デバイス検出とメッセージ表示
             if (isSafari() || isIOS()) {
