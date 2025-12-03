@@ -156,7 +156,19 @@ def continuous_capture_loop():
 
 def initialize_serial():
     """シリアル通信を初期化（ハイセラポンプ）"""
-    global ser_1, ser_2, serial_initialized1, serial_initialized2, ser_pump1, ser_pump2
+    global ser_1, ser_2, serial_initialized1, serial_initialized2, ser_pump1, ser_pump2, SERIAL_PORT_1, SERIAL_PORT_2
+    
+    # udevルールで作成された固定デバイスパスが存在するか確認（Linux環境のみ）
+    if not IS_WINDOWS:
+        if os.path.exists('/dev/ttyHysera1'):
+            if DEBUG_SYSTEM_LOG:
+                print("udev固定デバイス /dev/ttyHysera1 を検出しました。優先使用します。")
+            SERIAL_PORT_1 = '/dev/ttyHysera1'
+            
+        if os.path.exists('/dev/ttyHysera2'):
+            if DEBUG_SYSTEM_LOG:
+                print("udev固定デバイス /dev/ttyHysera2 を検出しました。優先使用します。")
+            SERIAL_PORT_2 = '/dev/ttyHysera2'
     
     if DEBUG_SYSTEM_LOG:
         print(f"OS: {platform.system()}")
