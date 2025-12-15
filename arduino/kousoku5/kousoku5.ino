@@ -1956,10 +1956,11 @@ void loop() {
 
       // 励磁OFFはすぐに行わず、0.5秒後に行う（バルブ閉鎖と同様の遅延処理を流用）
       // valveState: バルブは常時Openの場合は閉じない（falseだと閉じる）
-      bool valveShouldClose = !valveNormallyOpen[i];
+      // valveNormallyOpen[i] が false の場合、閉じる必要があるので false を渡す
+      // valveNormallyOpen[i] が true の場合、開いたままにするので true を渡す
 
       // motorEnable=false: 0.5秒後にモーター停止（励磁OFF）を実行
-      startValveDelay(i, VALVE_DELAY_CLOSE_AFTER, valveShouldClose, false, 0);
+      startValveDelay(i, VALVE_DELAY_CLOSE_AFTER, valveNormallyOpen[i], false, 0);
 
       // ポンプ状態は遅延処理後に updatePumpState が行われるが、ここでも一時的に更新
       updatePumpState(i);
